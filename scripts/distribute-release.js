@@ -31,8 +31,15 @@ function distribute() {
     process.exit(1);
   }
 
+  const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
+  const version = pkg.version || '1.0.2';
+  const targetExeName = `Dharani-Weighbridge-Setup-${version}-x64.exe`;
+
   const files = fs.readdirSync(releaseDir);
-  const installerExe = files.find(f => f.endsWith('.exe') && f.includes('Setup')) ||
+  const exactMatch = files.find(f => f === targetExeName);
+  const installerExe = exactMatch ||
+                       files.find(f => f.endsWith('.exe') && f.includes(version)) ||
+                       files.find(f => f.endsWith('.exe') && f.includes('Setup')) ||
                        files.find(f => f.endsWith('.exe') && !f.toLowerCase().includes('portable'));
 
   if (!installerExe) {
@@ -42,9 +49,6 @@ function distribute() {
   }
 
   const sourceExePath = path.join(releaseDir, installerExe);
-  const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
-  const version = pkg.version || '1.0.1';
-  const targetExeName = `Dharani-Weighbridge-Setup-${version}-x64.exe`;
   const targetExePath = path.join(downloadsDir, targetExeName);
 
   console.log(`📦 Copying ${installerExe} -> electron-downloads/${targetExeName}...`);

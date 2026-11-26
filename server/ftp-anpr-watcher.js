@@ -6,9 +6,13 @@ import { pool } from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const tempDir = path.join(__dirname, 'temp_sync');
-if (!fs.existsSync(tempDir)) {
-  fs.mkdirSync(tempDir, { recursive: true });
+const tempDir = path.join(process.env.DHARANI_DATA_DIR || __dirname, 'temp_sync');
+try {
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
+} catch (e) {
+  console.warn('Could not initialize tempDir:', e.message);
 }
 
 class FtpAnprWatcher {

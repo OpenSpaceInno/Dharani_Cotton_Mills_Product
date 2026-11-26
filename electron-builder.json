@@ -21,7 +21,8 @@
     "**/node_modules/serialport/**",
     "**/node_modules/bindings/**",
     "**/node_modules/node-gyp-build/**",
-    "server/**"
+    "server/**",
+    "dist/**"
   ],
 
   "files": [
@@ -107,6 +108,7 @@
 
   "nsis": {
     "oneClick"              : false,
+    "perMachine"            : false,
     "allowToChangeInstallationDirectory": true,
     "allowElevation"        : true,
     "createDesktopShortcut" : true,

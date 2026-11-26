@@ -14,7 +14,7 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const projectRoot = path.resolve(__dirname, '..');
+const projectRoot = process.env.DHARANI_DATA_DIR || path.resolve(__dirname, '..');
 const logsDir = path.join(projectRoot, 'logs');
 const logFile = path.join(logsDir, 'cloud-sync.log');
 

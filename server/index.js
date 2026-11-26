@@ -21,9 +21,14 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const snapshotsDir = path.resolve(__dirname, '..', 'public', 'snapshots');
-if (!fs.existsSync(snapshotsDir)) {
-  fs.mkdirSync(snapshotsDir, { recursive: true });
+const appDataRoot = process.env.DHARANI_DATA_DIR || path.resolve(__dirname, '..');
+const snapshotsDir = path.resolve(appDataRoot, 'public', 'snapshots');
+try {
+  if (!fs.existsSync(snapshotsDir)) {
+    fs.mkdirSync(snapshotsDir, { recursive: true });
+  }
+} catch (e) {
+  console.warn('Could not initialize snapshotsDir:', e.message);
 }
 
 // Configure multer for image uploads
@@ -2776,14 +2781,22 @@ class VentekSerialService {
 const ventekSerialService = new VentekSerialService();
 
 // Default scale data directory for third-party file sync
-const scaleDataDir = path.resolve(__dirname, '..', 'data');
-if (!fs.existsSync(scaleDataDir)) {
-  fs.mkdirSync(scaleDataDir, { recursive: true });
+const scaleDataDir = path.resolve(appDataRoot, 'data');
+try {
+  if (!fs.existsSync(scaleDataDir)) {
+    fs.mkdirSync(scaleDataDir, { recursive: true });
+  }
+} catch (e) {
+  console.warn('Could not initialize scaleDataDir:', e.message);
 }
 const defaultScaleFilePath = path.join(scaleDataDir, 'live_scale_weight.txt');
-if (!fs.existsSync(defaultScaleFilePath)) {
-  // Initialize with 0 so indicator reads 00000
-  fs.writeFileSync(defaultScaleFilePath, '0\n', 'utf8');
+try {
+  if (!fs.existsSync(defaultScaleFilePath)) {
+    // Initialize with 0 so indicator reads 00000
+    fs.writeFileSync(defaultScaleFilePath, '0\n', 'utf8');
+  }
+} catch (e) {
+  console.warn('Could not initialize defaultScaleFilePath:', e.message);
 }
 
 // Helper: resolve relative or absolute scale path

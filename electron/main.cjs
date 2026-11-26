@@ -39,6 +39,45 @@ const IS_PACKAGED  = app.isPackaged;
 const IS_DEV       = !IS_PACKAGED && process.env.NODE_ENV !== 'production';
 const APP_DATA_DIR = path.join(app.getPath('userData'), '');   // e.g. %APPDATA%\Dharani Weighbridge
 const SERVER_ENV_PATH = path.join(APP_DATA_DIR, 'server.env'); // client-local credentials file
+process.env.DHARANI_DATA_DIR = APP_DATA_DIR;
+
+// ─── File Logger for production diagnosis ─────────────────────────────────────
+const logFilePath = path.join(APP_DATA_DIR, 'app.log');
+function logToFile(level, ...args) {
+  const ts = new Date().toISOString();
+  const text = args.map(a => {
+    if (a instanceof Error) return a.stack || a.message;
+    if (typeof a === 'object') {
+      try { return JSON.stringify(a); } catch (_) { return String(a); }
+    }
+    return String(a);
+  }).join(' ');
+  const line = `[${ts}] [${level}] ${text}\n`;
+  try {
+    if (!fs.existsSync(APP_DATA_DIR)) fs.mkdirSync(APP_DATA_DIR, { recursive: true });
+    fs.appendFileSync(logFilePath, line, 'utf8');
+  } catch (_) {}
+}
+
+// Redirect console in production to log file
+const origLog = console.log;
+const origWarn = console.warn;
+const origError = console.error;
+console.log = (...args) => { origLog(...args); logToFile('INFO', ...args); };
+console.warn = (...args) => { origWarn(...args); logToFile('WARN', ...args); };
+console.error = (...args) => { origError(...args); logToFile('ERROR', ...args); };
+
+process.on('uncaughtException', (err) => {
+  logToFile('FATAL', 'Uncaught Exception:', err);
+  dialog.showErrorBox(
+    'Dharani Weighbridge — Application Error',
+    `An unexpected error occurred:\n\n${err?.message || err}\n\nLog saved to:\n${logFilePath}`
+  );
+});
+
+process.on('unhandledRejection', (reason) => {
+  logToFile('WARN', 'Unhandled Rejection:', reason);
+});
 
 // ─── Single-instance lock ─────────────────────────────────────────────────────
 const gotLock = app.requestSingleInstanceLock();
@@ -167,7 +206,7 @@ async function createWindow() {
     autoHideMenuBar: true,
     frame         : true,
     backgroundColor: '#0f172a',
-    show          : false,   // show after ready-to-show to avoid white flash
+    show          : true,   // Show immediately to ensure window appears instantly
     webPreferences: {
       preload         : path.join(__dirname, 'preload.cjs'),
       nodeIntegration : false,         // SECURITY: renderer has no Node.js access
@@ -175,10 +214,13 @@ async function createWindow() {
       webSecurity     : true,
       allowRunningInsecureContent: false,
       experimentalFeatures: false,
-      // Disable remote module (default false in Electron 14+, explicit for safety)
       enableRemoteModule: false,
     },
   });
+
+  // Ensure window is visible right away
+  mainWindow.show();
+  mainWindow.focus();
 
   // ── Content Security Policy ────────────────────────────────────────────────
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
@@ -186,9 +228,7 @@ async function createWindow() {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          // Allow scripts from self + unsafe-inline (required by React/Vite bundle)
-          // Allow connections only to localhost backend
-          "default-src 'self'; " +
+          "default-src 'self' data:; " +
           "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
           "style-src 'self' 'unsafe-inline'; " +
           "img-src 'self' data: blob: http://127.0.0.1:* http://localhost:*; " +
@@ -207,7 +247,7 @@ async function createWindow() {
   const allowed127    = `http://127.0.0.1:${SERVER_PORT}`;
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(allowedOrigin) && !url.startsWith(allowed127)) {
+    if (!url.startsWith(allowedOrigin) && !url.startsWith(allowed127) && !url.startsWith('data:')) {
       event.preventDefault();
       console.warn(`[Electron] Navigation blocked to external URL: ${url}`);
     }
@@ -221,16 +261,67 @@ async function createWindow() {
     return { action: 'deny' };
   });
 
-  // ── Load app ──────────────────────────────────────────────────────────────
-  const appUrl = `http://localhost:${SERVER_PORT}`;
-  mainWindow.loadURL(appUrl);
+  // Initial loading splash screen to ensure user sees instant UI response
+  const splashHtml = `<!DOCTYPE html>
+  <html>
+    <head>
+      <meta charset="utf-8">
+      <title>${APP_NAME}</title>
+      <style>
+        * { box-sizing: border-box; }
+        body {
+          margin: 0;
+          background: #0f172a;
+          color: #f8fafc;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100vh;
+          user-select: none;
+        }
+        .container {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          text-align: center;
+          padding: 24px;
+        }
+        .spinner {
+          width: 48px;
+          height: 48px;
+          border: 4px solid #1e293b;
+          border-top-color: #38bdf8;
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+          margin-bottom: 24px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        h1 { font-size: 24px; font-weight: 700; margin: 0 0 8px 0; color: #f8fafc; letter-spacing: -0.02em; }
+        p { font-size: 14px; color: #94a3b8; margin: 0; font-weight: 400; }
+        .version { font-size: 12px; color: #64748b; margin-top: 16px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="spinner"></div>
+        <h1>Dharani Weighbridge</h1>
+        <p id="msg">Starting local database and weighing services...</p>
+        <div class="version">Offline-First Desktop Edition</div>
+      </div>
+    </body>
+  </html>`;
+
+  await mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHtml)}`);
 
   // ── Retry on initial load failure (backend still spinning up) ─────────────
+  const appUrl = `http://localhost:${SERVER_PORT}`;
   let retryCount = 0;
   mainWindow.webContents.on('did-fail-load', (_evt, code, desc) => {
-    if (retryCount < 10) {
+    if (retryCount < 15) {
       retryCount++;
-      console.log(`[Electron] Load failed (${code}: ${desc}), retry ${retryCount}/10 in 1s…`);
+      console.log(`[Electron] Load pending (${code}: ${desc}), retry ${retryCount}/15 in 1s…`);
       setTimeout(() => {
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(appUrl);
       }, 1000);
@@ -240,9 +331,6 @@ async function createWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     retryCount = 0;
   });
-
-  // ── Show window once content is painted ───────────────────────────────────
-  mainWindow.once('ready-to-show', () => mainWindow.show());
 
   // ── Block DevTools in production ──────────────────────────────────────────
   if (IS_PACKAGED) {
@@ -388,18 +476,25 @@ function startSyncStatusPolling() {
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  console.log('[Electron] Application ready. Initializing subsystems...');
   registerIpcHandlers();
 
-  // Start backend in-process
-  await startBackend();
-
-  // Wait for the Express server to be ready before opening the window
-  const ready = await waitForServer(SERVER_PORT, 30000);
-  if (!ready) {
-    console.warn('[Electron] Backend did not respond in time — opening window anyway (retries will handle it).');
-  }
-
+  // 1. Create and show window immediately so user sees the application launch instantly
   await createWindow();
+
+  // 2. Start the embedded backend in parallel
+  startBackend().then(async () => {
+    console.log('[Electron] Backend initialization finished. Waiting for server port...');
+    const ready = await waitForServer(SERVER_PORT, 25000);
+    const appUrl = `http://localhost:${SERVER_PORT}`;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      console.log('[Electron] Loading UI from', appUrl);
+      mainWindow.loadURL(appUrl);
+    }
+  }).catch((err) => {
+    console.error('[Electron] Backend launch error:', err);
+  });
+
   startSyncStatusPolling();
 
   app.on('activate', () => {
