@@ -1,0 +1,36 @@
+# Optional Coolify / Traefik Production Reverse-Proxy Override
+# Usage: docker compose -f docker-compose.yml -f docker-compose.coolify.yml up -d
+services:
+  frontend:
+    ports: []
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=Host(`${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.frontend.entrypoints=websecure"
+      - "traefik.http.routers.frontend.tls=true"
+      - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+
+  phpmyadmin:
+    ports: []
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pma.rule=Host(`${PMA_DOMAIN:-pma.localhost}`)"
+      - "traefik.http.routers.pma.entrypoints=websecure"
+      - "traefik.http.routers.pma.tls=true"
+      - "traefik.http.routers.pma.tls.certresolver=letsencrypt"
+      - "traefik.http.services.pma.loadbalancer.server.port=80"
+      # Protect phpMyAdmin with Traefik BasicAuth middleware (generate hash with htpasswd)
+      - "traefik.http.routers.pma.middlewares=pma-auth"
+      - "traefik.http.middlewares.pma-auth.basicauth.users=${PMA_BASICAUTH_USERS:-}"
+
+  database:
+    networks:
+      rmc-network: {}
+      coolify:
+        aliases:
+          - rmc-database
+
+networks:
+  coolify:
+    external: true

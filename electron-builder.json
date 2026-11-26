@@ -1,0 +1,75 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.dharani.weighbridge",
+  "productName": "Dharani Weighbridge System",
+  "copyright": "Copyright © 2026 Dharani Weighbridge",
+  "directories": {
+    "output": "release"
+  },
+  "compression": "maximum",
+  "electronLanguages": ["en-US", "en"],
+  "asar": true,
+  "asarUnpack": [
+    "**/node_modules/@serialport/bindings-cpp/**",
+    "server/**/*",
+    "dist/**/*"
+  ],
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "server/index.js",
+    "server/db.js",
+    "server/anpr-processor.js",
+    "server/ftp-anpr-watcher.js",
+    "server/cloud-sync-service.js",
+    "server/routes/**/*",
+    "server/.env",
+    "server/package.json",
+    "server/node_modules/**/*",
+    "!node_modules/**/*",
+    "!src/**/*",
+    "!scripts/**/*",
+    "!docker/**/*",
+    "!docs/**/*",
+    "!**/*.md",
+    "!**/*.map",
+    "!**/*.ts",
+    "!**/*.log",
+    "!**/mediamtx.log",
+    "!server/temp_sync/**/*",
+    "!server/migrations/**/*",
+    "!server/node_modules/**/test/**",
+    "!server/node_modules/**/tests/**",
+    "!server/node_modules/**/docs/**",
+    "!server/node_modules/**/example/**",
+    "!server/node_modules/**/examples/**",
+    "!server/node_modules/**/.bin/**",
+    "!server/node_modules/**/README*"
+  ],
+  "extraResources": [
+    {
+      "from": "mediamtx.exe",
+      "to": "mediamtx.exe"
+    },
+    {
+      "from": "mediamtx.yml",
+      "to": "mediamtx.yml"
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      },
+      {
+        "target": "dir",
+        "arch": ["x64"]
+      }
+    ],
+    "requestedExecutionLevel": "asInvoker"
+  },
+  "portable": {
+    "artifactName": "Dharani_Weighbridge_Portable_${version}.exe"
+  }
+}

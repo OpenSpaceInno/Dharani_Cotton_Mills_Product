@@ -1,0 +1,202 @@
+services:
+  # ============================================================================
+  # 1. FRONTEND SERVICE (Vite React + Nginx Reverse Proxy)
+  # ============================================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+    image: dharani-weighbridge-frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - rmc-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ============================================================================
+  # 2. BACKEND API SERVICE (Node.js Express + MySQL Pool)
+  # ============================================================================
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: dharani-weighbridge-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    expose:
+      - "3001"
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      TZ: ${TZ:-Asia/Kolkata}
+      PORT: 3001
+      DB_HOST: ${DB_HOST:-database}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USER: ${DB_USER:-rmc_app}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_NAME: ${DB_NAME:-dharani_weighbridge}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
+      DB_CONNECT_TIMEOUT_MS: ${DB_CONNECT_TIMEOUT_MS:-10000}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      PLANT_ID: ${PLANT_ID:-PL01}
+      # Dedicated sync-worker container handles the 5-minute background schedule
+      SYNC_RUN_SCHEDULER: "false"
+      CLOUD_SYNC_ENABLED: ${CLOUD_SYNC_ENABLED:-true}
+      CLOUD_SYNC_INTERVAL_MS: ${CLOUD_SYNC_INTERVAL_MS:-300000}
+      CLOUD_SYNC_BATCH_SIZE: ${CLOUD_SYNC_BATCH_SIZE:-200}
+      SYNC_DELETE_PROPAGATION: ${SYNC_DELETE_PROPAGATION:-true}
+      REMOTE_DB_HOST: ${REMOTE_DB_HOST:-}
+      REMOTE_DB_PORT: ${REMOTE_DB_PORT:-3306}
+      REMOTE_DB_USER: ${REMOTE_DB_USER:-}
+      REMOTE_DB_PASSWORD: ${REMOTE_DB_PASSWORD:-}
+      REMOTE_DB_NAME: ${REMOTE_DB_NAME:-dharani_weighbridge}
+      CLOUD_SERVER_URL: ${CLOUD_SERVER_URL:-}
+      CLOUD_SYNC_SECRET: ${CLOUD_SYNC_SECRET:-}
+      FTP_ENABLED: ${FTP_ENABLED:-false}
+      FTP_HOST: ${FTP_HOST:-}
+      FTP_PORT: ${FTP_PORT:-2121}
+      FTP_USER: ${FTP_USER:-}
+      FTP_PASSWORD: ${FTP_PASSWORD:-}
+      FTP_DIR: ${FTP_DIR:-/Dharani}
+    volumes:
+      - rmc_snapshots:/app/public/snapshots
+      - rmc_logs:/app/logs
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - rmc-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://127.0.0.1:3001/api/health?strict=true || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ============================================================================
+  # 3. DATABASE SERVICE (MySQL 8.0 - Internal Network Only, Persistent Volume)
+  # ============================================================================
+  database:
+    image: mysql:8.0
+    restart: unless-stopped
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max_connections=300
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD is required}}
+      MYSQL_DATABASE: ${DB_NAME:-dharani_weighbridge}
+      MYSQL_USER: ${MYSQL_APP_USER:-rmc_app}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    volumes:
+      - rmc_mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    expose:
+      - "3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - rmc-network
+
+  # ============================================================================
+  # 4. PHPMYADMIN SERVICE (Protected Admin Access, Configurable Target Host)
+  # ============================================================================
+  phpmyadmin:
+    image: phpmyadmin:5.2-apache
+    restart: unless-stopped
+    environment:
+      # Default connects to Docker 'database' service; override PMA_HOST for external/local MySQL
+      PMA_HOST: ${PMA_HOST:-database}
+      PMA_PORT: ${PMA_PORT_NUM:-3306}
+      PMA_ARBITRARY: ${PMA_ARBITRARY:-0}
+      PMA_ABSOLUTE_URI: ${PMA_ABSOLUTE_URI:-}
+      UPLOAD_LIMIT: 128M
+      MEMORY_LIMIT: 256M
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Bound to localhost by default so phpMyAdmin is not exposed publicly without a reverse proxy/VPN/SSH tunnel
+    ports:
+      - "${PMA_BIND_IP:-127.0.0.1}:${PMA_PORT:-8081}:80"
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - rmc-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://127.0.0.1/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ============================================================================
+  # 5. BACKGROUND DATABASE SYNCHRONIZATION WORKER (Silent 5-Minute Sync)
+  # ============================================================================
+  sync-worker:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: dharani-weighbridge-backend:${IMAGE_TAG:-latest}
+    command: ["node", "sync-worker.js"]
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PLANT_ID: ${PLANT_ID:-PL01}
+      CLOUD_SYNC_ENABLED: ${CLOUD_SYNC_ENABLED:-true}
+      CLOUD_SYNC_INTERVAL_MS: ${CLOUD_SYNC_INTERVAL_MS:-300000}
+      CLOUD_SYNC_BATCH_SIZE: ${CLOUD_SYNC_BATCH_SIZE:-200}
+      SYNC_RUN_SCHEDULER: "true"
+      SYNC_DELETE_PROPAGATION: ${SYNC_DELETE_PROPAGATION:-true}
+      SOURCE_DB_HOST: ${SOURCE_DB_HOST:-database}
+      SOURCE_DB_PORT: ${SOURCE_DB_PORT:-3306}
+      SOURCE_DB_USER: ${SOURCE_DB_USER:-${DB_USER:-rmc_app}}
+      SOURCE_DB_PASSWORD: ${SOURCE_DB_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD is required}}
+      SOURCE_DB_NAME: ${SOURCE_DB_NAME:-${DB_NAME:-dharani_weighbridge}}
+      REMOTE_DB_HOST: ${REMOTE_DB_HOST:-}
+      REMOTE_DB_PORT: ${REMOTE_DB_PORT:-3306}
+      REMOTE_DB_USER: ${REMOTE_DB_USER:-}
+      REMOTE_DB_PASSWORD: ${REMOTE_DB_PASSWORD:-}
+      REMOTE_DB_NAME: ${REMOTE_DB_NAME:-dharani_weighbridge}
+      CLOUD_SERVER_URL: ${CLOUD_SERVER_URL:-}
+      CLOUD_SYNC_SECRET: ${CLOUD_SYNC_SECRET:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - rmc_logs:/app/logs
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - rmc-network
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'node sync-worker.js' > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  rmc_mysql_data:
+    driver: local
+  rmc_snapshots:
+    driver: local
+  rmc_logs:
+    driver: local
+
+networks:
+  rmc-network:
+    driver: bridge
