@@ -1,0 +1,7 @@
+Dharani Weighbridge System
+Copyright © 2026 Dharani Cotton Mills
+
+This software is provided for use by licensed Dharani Cotton Mills clients only.
+Unauthorized copying, distribution, reverse engineering, or modification is prohibited.
+
+For support, contact your system administrator or Dharani Cotton Mills IT department.

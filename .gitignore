@@ -40,3 +40,6 @@ public/snapshots/*.png
 *.njsproj
 *.sln
 *.sw?
+
+electron-downloads/*.exe
+

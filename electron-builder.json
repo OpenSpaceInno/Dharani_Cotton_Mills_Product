@@ -1,19 +1,29 @@
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "com.dharani.weighbridge",
-  "productName": "Dharani Weighbridge System",
-  "copyright": "Copyright © 2026 Dharani Weighbridge",
+
+  "appId"       : "com.dharani.weighbridge",
+  "productName" : "Dharani Weighbridge",
+  "copyright"   : "Copyright © 2026 Dharani Cotton Mills",
+
   "directories": {
-    "output": "release"
+    "output"       : "release",
+    "buildResources": "build-assets"
   },
-  "compression": "maximum",
-  "electronLanguages": ["en-US", "en"],
+
+  "compression" : "maximum",
+  "removePackageScripts": true,
+
+  "electronLanguages": ["en-US"],
+
   "asar": true,
   "asarUnpack": [
-    "**/node_modules/@serialport/bindings-cpp/**",
-    "server/**/*",
-    "dist/**/*"
+    "**/node_modules/@serialport/**",
+    "**/node_modules/serialport/**",
+    "**/node_modules/bindings/**",
+    "**/node_modules/node-gyp-build/**",
+    "server/**"
   ],
+
   "files": [
     "dist/**/*",
     "electron/**/*",
@@ -22,8 +32,10 @@
     "server/anpr-processor.js",
     "server/ftp-anpr-watcher.js",
     "server/cloud-sync-service.js",
+    "server/sync-worker.js",
+    "server/init.sql",
+    "server/config/**/*",
     "server/routes/**/*",
-    "server/.env",
     "server/package.json",
     "server/node_modules/**/*",
     "!node_modules/**/*",
@@ -31,45 +43,76 @@
     "!scripts/**/*",
     "!docker/**/*",
     "!docs/**/*",
+    "!data/**/*",
+    "!logs/**/*",
+    "!release/**/*",
+    "!electron-downloads/**/*",
+    "!build-assets/**/*",
     "!**/*.md",
     "!**/*.map",
     "!**/*.ts",
+    "!**/*.tsx",
     "!**/*.log",
+    "!**/.git/**/*",
+    "!**/.env",
+    "!**/.env.*",
     "!**/mediamtx.log",
-    "!server/temp_sync/**/*",
     "!server/migrations/**/*",
+    "!server/temp_sync/**/*",
+    "!server/tests/**/*",
+    "!server/scripts/**/*",
+    "!server/.env",
+    "!server/.env.*",
     "!server/node_modules/**/test/**",
     "!server/node_modules/**/tests/**",
     "!server/node_modules/**/docs/**",
+    "!server/node_modules/**/doc/**",
     "!server/node_modules/**/example/**",
     "!server/node_modules/**/examples/**",
     "!server/node_modules/**/.bin/**",
-    "!server/node_modules/**/README*"
+    "!server/node_modules/**/README*",
+    "!server/node_modules/**/CHANGELOG*",
+    "!server/node_modules/**/LICENCE*",
+    "!server/node_modules/**/LICENSE*",
+    "!server/node_modules/**/*.md"
   ],
+
   "extraResources": [
     {
-      "from": "mediamtx.exe",
-      "to": "mediamtx.exe"
-    },
-    {
-      "from": "mediamtx.yml",
-      "to": "mediamtx.yml"
+      "from"  : "build-assets/icons",
+      "to"    : "icons",
+      "filter": ["**/*"]
     }
   ],
+
   "win": {
-    "target": [
+    "icon"                   : "build-assets/icons/icon.ico",
+    "target"                 : [
       {
-        "target": "portable",
-        "arch": ["x64"]
-      },
-      {
-        "target": "dir",
-        "arch": ["x64"]
+        "target": "nsis",
+        "arch"  : ["x64"]
       }
     ],
-    "requestedExecutionLevel": "asInvoker"
+    "requestedExecutionLevel": "asInvoker",
+    "artifactName"           : "Dharani-Weighbridge-Setup-${version}-x64.exe"
   },
-  "portable": {
-    "artifactName": "Dharani_Weighbridge_Portable_${version}.exe"
-  }
+
+  "nsis": {
+    "oneClick"              : false,
+    "allowToChangeInstallationDirectory": true,
+    "allowElevation"        : true,
+    "createDesktopShortcut" : true,
+    "createStartMenuShortcut": true,
+    "shortcutName"          : "Dharani Weighbridge",
+    "installerIcon"         : "build-assets/icons/icon.ico",
+    "uninstallerIcon"       : "build-assets/icons/icon.ico",
+    "installerHeaderIcon"   : "build-assets/icons/icon.ico",
+    "deleteAppDataOnUninstall": false,
+    "runAfterFinish"        : true,
+    "menuCategory"          : "Dharani Cotton Mills",
+    "license"               : "build-assets/license.txt",
+    "include"               : "build-assets/installer.nsh"
+  },
+
+  "publish": null
 }
