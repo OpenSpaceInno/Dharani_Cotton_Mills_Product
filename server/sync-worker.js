@@ -17,9 +17,28 @@ async function main() {
   console.log(` Interval:    ${Math.round(cloudSyncService.intervalMs / 1000)}s`);
   console.log('===============================================================');
 
+  // Wait cleanly for MySQL readiness during cold Docker/Coolify boots
+  const maxDbAttempts = Number(process.env.DB_STARTUP_RETRIES) || 24;
+  const retryDelayMs = Number(process.env.DB_STARTUP_RETRY_DELAY_MS) || 2500;
+  for (let attempt = 1; attempt <= maxDbAttempts; attempt += 1) {
+    try {
+      await cloudSyncService.sourcePool.query('SELECT 1');
+      break;
+    } catch (err) {
+      if (attempt < maxDbAttempts) {
+        console.log(`⏳ Sync Worker waiting for MySQL (${attempt}/${maxDbAttempts})...`);
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
+  }
+
   await cloudSyncService.initialize({ startScheduler: true });
 
+  // Keep container alive cleanly when sync target is not configured (e.g. standalone server deployment)
+  const keepAliveTimer = setInterval(() => {}, 60000);
+
   const shutdown = async (signal) => {
+    clearInterval(keepAliveTimer);
     console.log(`\n[Sync Worker] Received ${signal}, shutting down gracefully...`);
     await cloudSyncService.closePools();
     process.exit(0);

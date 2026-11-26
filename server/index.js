@@ -5250,9 +5250,19 @@ for (const dPath of candidateDistPaths) {
 
 // Start server
 async function startServer() {
-  // Test database connection
-  const connected = await testConnection();
-  
+  // Wait cleanly for MySQL container readiness during cold Docker/Coolify boots
+  const maxDbAttempts = Number(process.env.DB_STARTUP_RETRIES) || 24;
+  const retryDelayMs = Number(process.env.DB_STARTUP_RETRY_DELAY_MS) || 2500;
+  let connected = false;
+  for (let attempt = 1; attempt <= maxDbAttempts; attempt += 1) {
+    connected = await testConnection();
+    if (connected) break;
+    if (attempt < maxDbAttempts) {
+      console.log(`⏳ Waiting for MySQL (${attempt}/${maxDbAttempts})... retrying in ${retryDelayMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+
   if (connected) {
     // Sync MediaMTX config with DB cameras
     await syncMediaMtxConfig().catch(() => {});
