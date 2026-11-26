@@ -744,7 +744,8 @@ async function initializeDatabase() {
       { name: 'first_weight_date', type: "DATE DEFAULT NULL" },
       { name: 'second_weight_date', type: "DATE DEFAULT NULL" },
       { name: 'nett_weight', type: "DECIMAL(10,2) DEFAULT NULL" },
-      { name: 'admin_name', type: "VARCHAR(100) DEFAULT ''" }
+      { name: 'admin_name', type: "VARCHAR(100) DEFAULT ''" },
+      { name: 'updated_at', type: 'DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' }
     ];
 
     for (const col of requiredSlipCols) {
