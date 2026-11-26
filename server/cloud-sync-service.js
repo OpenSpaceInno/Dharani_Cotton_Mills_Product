@@ -80,7 +80,7 @@ export class CloudSyncService {
     this.remoteDatabase = options.remoteDatabase || process.env.REMOTE_DB_NAME || 'dharani_weighbridge';
 
     this.cloudServerUrl = (options.cloudServerUrl ?? process.env.CLOUD_SERVER_URL ?? '').trim().replace(/\/+$/, '');
-    this.cloudSyncSecret = options.cloudSyncSecret ?? process.env.CLOUD_SYNC_SECRET ?? '';
+    this.cloudSyncSecret = String(options.cloudSyncSecret ?? process.env.CLOUD_SYNC_SECRET ?? '').trim().replace(/^['"]|['"]$/g, '');
     this.plantId = process.env.PLANT_ID || 'PL01';
     this.intervalMs = Math.max(5000, Number(process.env.CLOUD_SYNC_INTERVAL_MS) || 300000);
     this.syncBatchSize = Math.max(10, Math.min(1000, Number(process.env.CLOUD_SYNC_BATCH_SIZE) || 200));
@@ -565,6 +565,17 @@ export class CloudSyncService {
             : null;
 
           const pkCol = cols.has(tableCfg.pkColumn.toLowerCase()) ? tableCfg.pkColumn : null;
+
+          // Ensure manually inserted rows with NULL watermark timestamps are captured incrementally
+          if (watermarkCol === 'updated_at') {
+            await lockConn.query(
+              `UPDATE \`${table}\` SET \`updated_at\` = NOW() WHERE \`updated_at\` IS NULL`
+            ).catch(() => {});
+          } else if (watermarkCol === 'created_at') {
+            await lockConn.query(
+              `UPDATE \`${table}\` SET \`created_at\` = NOW() WHERE \`created_at\` IS NULL`
+            ).catch(() => {});
+          }
 
           let hasMore = true;
           while (hasMore) {

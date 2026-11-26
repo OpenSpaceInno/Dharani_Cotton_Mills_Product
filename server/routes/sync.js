@@ -10,7 +10,8 @@ import {
 } from '../config/sync-config.js';
 
 const router = express.Router();
-const EXPECTED_SYNC_SECRET = process.env.CLOUD_SYNC_SECRET || '';
+const normalizeSecret = (val) => String(val || '').trim().replace(/^['"]|['"]$/g, '');
+const getExpectedSyncSecret = () => normalizeSecret(process.env.CLOUD_SYNC_SECRET);
 
 // ============================================================================
 // GET /api/sync/status
@@ -87,8 +88,14 @@ router.post('/init-tables', async (req, res) => {
 // Central Server Receiver: Conflict-safe transactional upsert + delete sync
 // ============================================================================
 router.post('/push', async (req, res) => {
-  const incomingSecret = req.headers['x-sync-secret'] || req.body?.syncSecret;
-  if (!EXPECTED_SYNC_SECRET || incomingSecret !== EXPECTED_SYNC_SECRET) {
+  const expectedSecret = getExpectedSyncSecret();
+  const incomingSecret = normalizeSecret(req.headers['x-sync-secret'] || req.body?.syncSecret);
+  if (!expectedSecret) {
+    console.warn('[Sync Receiver] Rejected push: CLOUD_SYNC_SECRET is not configured on this server.');
+    return res.status(401).json({ success: false, error: 'Unauthorized: Server CLOUD_SYNC_SECRET not configured' });
+  }
+  if (incomingSecret !== expectedSecret) {
+    console.warn('[Sync Receiver] Rejected push: x-sync-secret mismatch.');
     return res.status(401).json({ success: false, error: 'Unauthorized: Invalid x-sync-secret' });
   }
 
