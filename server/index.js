@@ -1872,6 +1872,8 @@ async function syncSessionToWeighSlip(txNo, b, sessionId, sessionStatus) {
       ? (b.grossWeight !== undefined && b.grossWeight !== null ? b.grossWeight : (secondWeight || null))
       : (b.grossWeight !== undefined && b.grossWeight !== null ? b.grossWeight : (firstWeight || null));
 
+    const slipDateTime = toValidDateOrNull(b.dateTime) || toValidDateOrNull(b.secondWeightTime) || toValidDateOrNull(b.firstWeightTime) || new Date();
+
     await pool.query(
       `INSERT INTO weigh_slips (
         slip_number, session_id, transaction_no, vehicle_reg_no, party_name, firm_name,
@@ -1881,16 +1883,16 @@ async function syncSessionToWeighSlip(txNo, b, sessionId, sessionStatus) {
         chess_name, final_rate, total_amount, print_options, driver_name, destination,
         operator_name, evidence, company_name, company_address, phone_no, load_slip_no,
         vehicle_no, cultivator_name, location_name, father_name, mobile_no, status, first_weight_date,
-        second_weight_date, nett_weight, admin_name, product, created_at
+        second_weight_date, nett_weight, admin_name, product, created_at, updated_at
       ) VALUES (
         ?, ?, ?, ?, ?, ?,
-        NOW(), ?, ?, ?, ?,
+        COALESCE(?, NOW()), ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, NOW()
+        ?, ?, ?, ?, NOW(), NOW()
       ) ON DUPLICATE KEY UPDATE
         session_id = VALUES(session_id),
         transaction_no = VALUES(transaction_no),
@@ -1901,6 +1903,7 @@ async function syncSessionToWeighSlip(txNo, b, sessionId, sessionStatus) {
         company_name = VALUES(company_name),
         material = VALUES(material),
         product = VALUES(product),
+        date_time = COALESCE(VALUES(date_time), NOW()),
         first_weight = VALUES(first_weight),
         first_weight_date = VALUES(first_weight_date),
         first_weight_time = VALUES(first_weight_time),
@@ -1933,7 +1936,8 @@ async function syncSessionToWeighSlip(txNo, b, sessionId, sessionStatus) {
         print_options = VALUES(print_options),
         evidence = VALUES(evidence),
         admin_name = VALUES(admin_name),
-        operator_name = VALUES(operator_name)`,
+        operator_name = VALUES(operator_name),
+        updated_at = NOW()`,
       [
         slipNumber,
         sessionId,
@@ -1941,6 +1945,7 @@ async function syncSessionToWeighSlip(txNo, b, sessionId, sessionStatus) {
         b.vehicleRegNo || b.vehicle_reg_no || b.vehicleNo || '',
         b.partyName || b.party_name || '',
         compName,
+        slipDateTime,
         firstWeight,
         toValidDateOrNull(b.firstWeightTime) || (firstWeight ? new Date() : null),
         secondWeight,
@@ -3591,6 +3596,8 @@ app.post('/api/weighbridge/slips', async (req, res) => {
     const fDate = b.firstWeightDate || (b.firstWeightTime ? new Date(b.firstWeightTime).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
     const sDate = b.secondWeightDate || (b.secondWeightTime ? new Date(b.secondWeightTime).toISOString().split('T')[0] : (secondWeight ? new Date().toISOString().split('T')[0] : null));
 
+    const slipDateTime = b.dateTime ? new Date(b.dateTime) : (b.secondWeightTime ? new Date(b.secondWeightTime) : new Date());
+
     await pool.query(
       `INSERT INTO weigh_slips (
         slip_number, session_id, transaction_no, vehicle_reg_no, party_name, firm_name,
@@ -3600,20 +3607,21 @@ app.post('/api/weighbridge/slips', async (req, res) => {
         chess_name, final_rate, total_amount, print_options, driver_name, destination,
         operator_name, evidence, company_name, company_address, phone_no, load_slip_no,
         vehicle_no, cultivator_name, location_name, father_name, mobile_no, status, first_weight_date,
-        second_weight_date, nett_weight, admin_name, created_at
+        second_weight_date, nett_weight, admin_name, created_at, updated_at
       ) VALUES (
         ?, ?, ?, ?, ?, ?,
-        NOW(), ?, ?, ?, ?,
+        COALESCE(?, NOW()), ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, NOW()
+        ?, ?, ?, NOW(), NOW()
       ) ON DUPLICATE KEY UPDATE
         transaction_no = VALUES(transaction_no),
         vehicle_reg_no = VALUES(vehicle_reg_no),
         party_name = VALUES(party_name),
+        date_time = COALESCE(VALUES(date_time), NOW()),
         first_weight = VALUES(first_weight),
         first_weight_time = VALUES(first_weight_time),
         second_weight = VALUES(second_weight),
@@ -3637,7 +3645,8 @@ app.post('/api/weighbridge/slips', async (req, res) => {
         first_weight_date = VALUES(first_weight_date),
         second_weight_date = VALUES(second_weight_date),
         nett_weight = VALUES(nett_weight),
-        admin_name = VALUES(admin_name)`,
+        admin_name = VALUES(admin_name),
+        updated_at = NOW()`,
       [
         slipNumber,
         b.sessionId || `WB-SESS-${Date.now()}`,
@@ -3645,6 +3654,7 @@ app.post('/api/weighbridge/slips', async (req, res) => {
         b.vehicleRegNo || b.vehicleNo || '',
         b.partyName || '',
         compName,
+        slipDateTime,
         firstWeight,
         b.firstWeightTime ? new Date(b.firstWeightTime) : null,
         secondWeight,
@@ -5248,51 +5258,51 @@ for (const dPath of candidateDistPaths) {
   }
 }
 
-// Start server
+// Start server immediately on PORT to serve HTTP and UI without blocking
 async function startServer() {
-  // Wait cleanly for MySQL container readiness during cold Docker/Coolify boots
-  const maxDbAttempts = Number(process.env.DB_STARTUP_RETRIES) || 24;
-  const retryDelayMs = Number(process.env.DB_STARTUP_RETRY_DELAY_MS) || 2500;
-  let connected = false;
-  for (let attempt = 1; attempt <= maxDbAttempts; attempt += 1) {
-    connected = await testConnection();
-    if (connected) break;
-    if (attempt < maxDbAttempts) {
-      console.log(`⏳ Waiting for MySQL (${attempt}/${maxDbAttempts})... retrying in ${retryDelayMs}ms`);
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-    }
-  }
-
-  if (connected) {
-    // Sync MediaMTX config with DB cameras
-    await syncMediaMtxConfig().catch(() => {});
-    // Initialize database tables
-    await initializeDatabase();
-  }
-
-  // Ensure camera streaming proxy is online
-  checkAndStartMediaMtx();
-  
-  // Start Ventek Weighbridge serial integration service
-  ventekSerialService.start();
-  
-  // Start FTP ANPR camera watcher
-  ftpAnprWatcher.start();
-  
-  // Start automated Edge-to-Server MySQL Synchronization Service (Every 5 minutes)
-  await cloudSyncService.initialize({
-    startScheduler: process.env.SYNC_RUN_SCHEDULER !== 'false',
-  });
-  
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
     console.log(`📊 API endpoints available at http://localhost:${PORT}/api`);
     console.log(`🎯 ANPR endpoints available at http://localhost:${PORT}/api/anpr`);
-    console.log(`🔄 Edge-to-Server MySQL Sync configured (Target: ${cloudSyncService.getDestinationLabel()})`);
-    if (!connected) {
+  });
+
+  // Background initialization of DB, hardware services, and sync worker
+  (async () => {
+    const maxDbAttempts = Number(process.env.DB_STARTUP_RETRIES) || 24;
+    const retryDelayMs = Number(process.env.DB_STARTUP_RETRY_DELAY_MS) || 2500;
+    let connected = false;
+    for (let attempt = 1; attempt <= maxDbAttempts; attempt += 1) {
+      connected = await testConnection();
+      if (connected) break;
+      if (attempt < maxDbAttempts) {
+        console.log(`⏳ Waiting for MySQL (${attempt}/${maxDbAttempts})... retrying in ${retryDelayMs}ms`);
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
+
+    if (connected) {
+      await syncMediaMtxConfig().catch(() => {});
+      await initializeDatabase().catch(() => {});
+    } else {
       console.log('⚠️  Warning: Database connection failed. Please check MySQL configuration.');
     }
-  });
+
+    // Ensure camera streaming proxy is online
+    checkAndStartMediaMtx();
+    
+    // Start Ventek Weighbridge serial integration service
+    ventekSerialService.start();
+    
+    // Start FTP ANPR camera watcher
+    ftpAnprWatcher.start();
+    
+    // Start automated Edge-to-Server MySQL Synchronization Service (Every 5 minutes)
+    await cloudSyncService.initialize({
+      startScheduler: process.env.SYNC_RUN_SCHEDULER !== 'false',
+    }).catch((err) => console.warn('Cloud sync init notice:', err.message));
+
+    console.log(`🔄 Edge-to-Server MySQL Sync configured (Target: ${cloudSyncService.getDestinationLabel()})`);
+  })().catch((err) => console.error('Startup background init error:', err));
 }
 
 startServer();

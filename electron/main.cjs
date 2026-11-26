@@ -82,7 +82,11 @@ function waitForServer(port, maxMs = 30000) {
 /** Resolve the server entry point — works both dev and packaged (asar-unpacked). */
 function resolveServerEntry() {
   if (IS_PACKAGED) {
-    return path.join(process.resourcesPath, 'app.asar.unpacked', 'server', 'index.js');
+    const p1 = path.join(process.resourcesPath, 'app.asar.unpacked', 'server', 'index.js');
+    if (fs.existsSync(p1)) return p1;
+    const p2 = path.join(process.resourcesPath, 'server', 'index.js');
+    if (fs.existsSync(p2)) return p2;
+    return path.join(__dirname, '..', 'server', 'index.js');
   }
   return path.resolve(__dirname, '..', 'server', 'index.js');
 }

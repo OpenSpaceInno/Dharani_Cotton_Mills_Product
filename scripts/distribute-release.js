@@ -32,7 +32,8 @@ function distribute() {
   }
 
   const files = fs.readdirSync(releaseDir);
-  const installerExe = files.find(f => f.endsWith('.exe') && (f.includes('Setup') || f.includes('Weighbridge')));
+  const installerExe = files.find(f => f.endsWith('.exe') && f.includes('Setup')) ||
+                       files.find(f => f.endsWith('.exe') && !f.toLowerCase().includes('portable'));
 
   if (!installerExe) {
     console.warn('⚠️ No .exe installer found in release/. Available files:', files);
@@ -41,7 +42,9 @@ function distribute() {
   }
 
   const sourceExePath = path.join(releaseDir, installerExe);
-  const targetExeName = 'Dharani-Weighbridge-Setup-1.0.0-x64.exe';
+  const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
+  const version = pkg.version || '1.0.1';
+  const targetExeName = `Dharani-Weighbridge-Setup-${version}-x64.exe`;
   const targetExePath = path.join(downloadsDir, targetExeName);
 
   console.log(`📦 Copying ${installerExe} -> electron-downloads/${targetExeName}...`);
@@ -62,7 +65,7 @@ function distribute() {
   const releaseNotes = `================================================================================
 Dharani Weighbridge Desktop Application — Release Notes
 ================================================================================
-Version: 1.0.0
+Version: ${version}
 Architecture: Windows x64 (64-bit)
 Target OS: Windows 10 / Windows 11 / Windows Server 2016+
 Package Type: Production NSIS Installer (${targetExeName})

@@ -18,7 +18,8 @@ const poolConfigBase = {
   connectTimeout: Number(process.env.DB_CONNECT_TIMEOUT_MS) || 10000,
   enableKeepAlive: true,
   keepAliveInitialDelay: 10000,
-  multipleStatements: true
+  multipleStatements: true,
+  timezone: process.env.TZ === 'Asia/Kolkata' ? '+05:30' : (process.env.DB_TIMEZONE || '+05:30')
 };
 
 // Create connection pool (without database selection initially)

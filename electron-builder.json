@@ -82,6 +82,14 @@
       "from"  : "build-assets/icons",
       "to"    : "icons",
       "filter": ["**/*"]
+    },
+    {
+      "from": "mediamtx.exe",
+      "to": "mediamtx.exe"
+    },
+    {
+      "from": "mediamtx.yml",
+      "to": "mediamtx.yml"
     }
   ],
 

@@ -377,7 +377,6 @@ export class CloudSyncService {
   async acquireSyncLock() {
     const conn = await this.sourcePool.getConnection();
     try {
-      await conn.query("SET time_zone = '+00:00'");
       const [rows] = await conn.query("SELECT GET_LOCK('dharani_db_sync_lock', 0) AS acquired");
       if (rows[0]?.acquired === 1) {
         return conn;
@@ -800,7 +799,6 @@ export class CloudSyncService {
 
     try {
       conn = await this.remoteDbPool.getConnection();
-      await conn.query("SET time_zone = '+00:00'");
       await conn.beginTransaction();
       await conn.query('SET FOREIGN_KEY_CHECKS = 0');
 

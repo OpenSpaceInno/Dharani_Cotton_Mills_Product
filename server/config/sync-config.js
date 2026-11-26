@@ -34,10 +34,6 @@ export const SYNC_EXCLUDED_TABLES = [
     reason: 'Local synchronization watermark metadata.',
   },
   {
-    table: 'sync_logs',
-    reason: 'Local synchronization execution history.',
-  },
-  {
     table: 'sync_tombstones',
     reason: 'Local deletion propagation queue.',
   },
@@ -211,7 +207,7 @@ export const SYNC_ELIGIBLE_TABLES = [
     appendOnlyCheckCols: ['event_id', 'angle', 'url'],
   },
 
-  // Stage 5: Operational audit logs (append-only)
+  // Stage 5: Operational audit logs & sync logs (append-only)
   {
     table: 'audit_logs',
     stage: 5,
@@ -219,6 +215,17 @@ export const SYNC_ELIGIBLE_TABLES = [
     conflictKeys: ['id'],
     watermarkColumn: 'created_at',
     omitSurrogateId: false,
+    excludedColumns: [],
+    supportsDeleteSync: false,
+    hasUpdatedAtConflictGuard: false,
+  },
+  {
+    table: 'sync_logs',
+    stage: 5,
+    pkColumn: 'sync_id',
+    conflictKeys: ['sync_id'],
+    watermarkColumn: 'started_at',
+    omitSurrogateId: true,
     excludedColumns: [],
     supportsDeleteSync: false,
     hasUpdatedAtConflictGuard: false,

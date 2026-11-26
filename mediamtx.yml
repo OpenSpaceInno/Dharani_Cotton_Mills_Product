@@ -566,27 +566,12 @@ pathDefaults:
 # for example "~^prefix" will match all paths that start with "prefix".
 paths:
   cam1:
-    source: rtsp://admin:Password@123@192.168.0.101:554/ch1/main/av_stream
+    source: rtsp://admin:admin123@192.168.0.101:554/rtsp/streaming?channel=01&subtype=0
     sourceProtocol: tcp
     sourceOnDemand: no
 
   cam_gate_1:
-    source: rtsp://admin:Password@123@192.168.0.101:554/ch1/main/av_stream
-    sourceProtocol: tcp
-    sourceOnDemand: no
-
-  cam2:
-    source: rtsp://admin:Password@123@192.168.0.99:554/ch1/main/av_stream
-    sourceProtocol: tcp
-    sourceOnDemand: no
-
-  cam_gate_2:
-    source: rtsp://admin:Password@123@192.168.0.99:554/ch1/main/av_stream
-    sourceProtocol: tcp
-    sourceOnDemand: no
-
-  cam3:
-    source: rtsp://admin:admin123@192.168.0.102:554/rtsp/streaming?channel=01&subtype=0
+    source: rtsp://admin:admin123@192.168.0.101:554/rtsp/streaming?channel=01&subtype=0
     sourceProtocol: tcp
     sourceOnDemand: no
 
