@@ -42,7 +42,7 @@ services:
       DB_HOST: ${DB_HOST:-database}
       DB_PORT: ${DB_PORT:-3306}
       DB_USER: ${DB_USER:-rmc_app}
-      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_PASSWORD: ${DB_PASSWORD:-dharani_db_pass}
       DB_NAME: ${DB_NAME:-dharani_weighbridge}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
       DB_CONNECT_TIMEOUT_MS: ${DB_CONNECT_TIMEOUT_MS:-10000}
@@ -94,10 +94,10 @@ services:
       --collation-server=utf8mb4_unicode_ci
       --max_connections=300
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD is required}}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-${DB_PASSWORD:-dharani_db_pass}}
       MYSQL_DATABASE: ${DB_NAME:-dharani_weighbridge}
       MYSQL_USER: ${MYSQL_APP_USER:-rmc_app}
-      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-dharani_db_pass}
     volumes:
       - rmc_mysql_data:/var/lib/mysql
       - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
@@ -164,7 +164,7 @@ services:
       SOURCE_DB_HOST: ${SOURCE_DB_HOST:-database}
       SOURCE_DB_PORT: ${SOURCE_DB_PORT:-3306}
       SOURCE_DB_USER: ${SOURCE_DB_USER:-${DB_USER:-rmc_app}}
-      SOURCE_DB_PASSWORD: ${SOURCE_DB_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD is required}}
+      SOURCE_DB_PASSWORD: ${SOURCE_DB_PASSWORD:-${DB_PASSWORD:-dharani_db_pass}}
       SOURCE_DB_NAME: ${SOURCE_DB_NAME:-${DB_NAME:-dharani_weighbridge}}
       REMOTE_DB_HOST: ${REMOTE_DB_HOST:-}
       REMOTE_DB_PORT: ${REMOTE_DB_PORT:-3306}
