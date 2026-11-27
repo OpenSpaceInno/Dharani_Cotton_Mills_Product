@@ -238,10 +238,9 @@ export const CameraManager: React.FC = () => {
     } catch (err: any) {
       toast.error(err.message || 'Failed to save camera.');
     }
-  }
-};
+  };
 
-const handleDelete = async (deviceId: string, name: string) => {
+  const handleDelete = async (deviceId: string, name: string) => {
   if (!confirm(`Are you sure you want to remove camera "${name}" (${deviceId})?`)) return;
   try {
     await api.deleteCamera(deviceId);
