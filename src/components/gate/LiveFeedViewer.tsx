@@ -106,7 +106,7 @@ export function LiveFeedViewer({
       const data = await api.getRTSPConfig(camera.id);
 
       const dynamicDirectUrl = camera.direct_url || camera.rtsp_url ||
-        (cameraIp ? `rtsp://admin:Password@123@${cameraIp}:554/ch1/main/av_stream` : '');
+        (cameraIp ? `rtsp://admin:Password@123@${cameraIp}:554/Streaming/Channels/102` : '');
       const dynamicHlsUrl = normalizeStreamUrl(camera.hls_proxy_url);
 
       if (data && !data.error) {
@@ -118,7 +118,7 @@ export function LiveFeedViewer({
           port: data.port || 554,
           username: data.username || 'admin',
           password: data.password || 'Password@123',
-          streamPath: data.stream_path || '/ch1/main/av_stream',
+          streamPath: data.stream_path || '/Streaming/Channels/102',
           transport: (data.transport as 'tcp' | 'udp') || 'tcp',
           reconnectInterval: data.reconnect_interval || 5,
           bufferSize: data.buffer_size || 1024,
@@ -135,7 +135,7 @@ export function LiveFeedViewer({
           port: 554,
           username: 'admin',
           password: 'Password@123',
-          streamPath: '/ch1/main/av_stream',
+          streamPath: '/Streaming/Channels/102',
           transport: 'tcp',
           reconnectInterval: 5,
           bufferSize: 1024,
@@ -146,7 +146,7 @@ export function LiveFeedViewer({
       }
     } catch (err) {
       const dynamicDirectUrl = camera.direct_url || camera.rtsp_url ||
-        (cameraIp ? `rtsp://admin:Password@123@${cameraIp}:554/ch1/main/av_stream` : '');
+        (cameraIp ? `rtsp://admin:Password@123@${cameraIp}:554/Streaming/Channels/102` : '');
       const dynamicHlsUrl = normalizeStreamUrl(camera.hls_proxy_url);
 
       setRtspConfig({
@@ -157,7 +157,7 @@ export function LiveFeedViewer({
         port: 554,
         username: 'admin',
         password: 'Password@123',
-        streamPath: '/ch1/main/av_stream',
+        streamPath: '/Streaming/Channels/102',
         transport: 'tcp',
         reconnectInterval: 5,
         bufferSize: 1024,
@@ -252,9 +252,21 @@ export function LiveFeedViewer({
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
-          console.warn(`[${camera.id}] HLS stream offline or retrying:`, data.details);
-          setStreamStatus('error');
-          scheduleReconnect(5000);
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              console.warn(`[${camera.id}] HLS network error (${data.details}), retrying startLoad...`);
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              console.warn(`[${camera.id}] HLS media error (${data.details}), recovering...`);
+              hls.recoverMediaError();
+              break;
+            default:
+              console.warn(`[${camera.id}] Fatal HLS stream error (${data.details}), retrying...`);
+              setStreamStatus('error');
+              scheduleReconnect(3000);
+              break;
+          }
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {

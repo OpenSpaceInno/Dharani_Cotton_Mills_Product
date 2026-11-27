@@ -29,6 +29,8 @@ export const CameraManager: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { reachable: boolean; message: string; ports?: any }>>({});
+  const [testingRtsp, setTestingRtsp] = useState(false);
+  const [rtspTestResult, setRtspTestResult] = useState<{ success: boolean; status: string; message: string } | null>(null);
 
   // Dialog state
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -44,7 +46,7 @@ export const CameraManager: React.FC = () => {
     port: 554,
     username: 'admin',
     password: 'Password@123',
-    stream_path: '/ch1/main/av_stream',
+    stream_path: '/Streaming/Channels/102',
     status: 'online',
   });
 
@@ -82,9 +84,10 @@ export const CameraManager: React.FC = () => {
   const handleOpenAdd = () => {
     setEditingCamera(null);
     setShowPassword(false);
+    setRtspTestResult(null);
     const nextNum = cameras.length + 1;
-    const defaultIp = nextNum === 1 ? '192.168.0.101' : (nextNum === 2 ? '192.168.0.99' : `192.168.0.10${nextNum}`);
-    const defaultStream = nextNum === 1 ? '/ch1/main/av_stream' : '/Streaming/Channels/101';
+    const defaultIp = nextNum === 1 ? '192.168.10.201' : (nextNum === 2 ? '192.168.10.202' : `192.168.10.20${nextNum}`);
+    const defaultStream = '/Streaming/Channels/102';
     const defaultUser = 'admin';
     const defaultPass = 'Password@123';
 
@@ -107,6 +110,7 @@ export const CameraManager: React.FC = () => {
   const handleOpenEdit = async (cam: CameraDevice) => {
     setEditingCamera(cam);
     setShowPassword(false);
+    setRtspTestResult(null);
     const targetDevId = cam.device_id || (cam as any).deviceId || (cam as any).id || '';
     const rawIp = cam.ip_address || '';
     const cleanIp = rawIp.includes('@') ? rawIp.split('@').pop()?.trim() || '' : rawIp.trim();
@@ -118,7 +122,7 @@ export const CameraManager: React.FC = () => {
     const user = rtsp?.username || 'admin';
     const pass = rtsp?.password || 'Password@123';
     const port = rtsp?.port || 554;
-    const stream = rtsp?.stream_path || (targetDevId.includes('scale') ? '/Streaming/Channels/101' : '/ch1/main/av_stream');
+    const stream = rtsp?.stream_path || '/Streaming/Channels/102';
     const existingRtsp = rtsp?.direct_url || rtsp?.url || (cam as any).direct_url || (cam as any).rtsp_url;
 
     setFormData({
@@ -135,6 +139,38 @@ export const CameraManager: React.FC = () => {
       status: cam.status || 'online',
     });
     setIsDialogOpen(true);
+  };
+
+  const handleTestRtsp = async () => {
+    const rawIp = formData.ip_address.trim();
+    const cleanIp = rawIp.includes('@') ? rawIp.split('@').pop()?.trim() || '' : rawIp;
+    if (!cleanIp) {
+      toast.error('Please enter a valid camera IP address first.');
+      return;
+    }
+    setTestingRtsp(true);
+    setRtspTestResult(null);
+    try {
+      const res = await api.testRtspStream({
+        ip: cleanIp,
+        port: Number(formData.port) || 554,
+        username: formData.username,
+        password: formData.password,
+        stream_path: formData.stream_path,
+      });
+      setRtspTestResult(res);
+      if (res.success) {
+        toast.success(res.message);
+      } else {
+        toast.error(res.message);
+      }
+    } catch (err: any) {
+      const msg = err.message || 'Failed to connect to camera RTSP port';
+      setRtspTestResult({ success: false, status: 'error', message: msg });
+      toast.error(msg);
+    } finally {
+      setTestingRtsp(false);
+    }
   };
 
   const notifyCameraSync = () => {
@@ -362,7 +398,9 @@ return (
                 <div className="grid grid-cols-2 gap-2 text-xs bg-muted/40 p-2.5 rounded-lg border border-border/50">
                   <div>
                     <span className="text-[10px] uppercase font-semibold text-muted-foreground block">IP Address</span>
-                    <span className="font-mono font-medium text-foreground">{cam.ip_address}</span>
+                    <span className="font-mono font-medium text-foreground">
+                      {(cam.ip_address || '').includes('@') ? (cam.ip_address || '').split('@').pop()?.trim() : (cam.ip_address || 'Unconfigured')}
+                    </span>
                   </div>
                   <div>
                     <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Location</span>
@@ -587,15 +625,18 @@ return (
 
               {/* Stream Presets */}
               <div className="space-y-1">
-                <Label className="text-[11px]">Stream Path Preset</Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-[11px]">Stream Path Preset</Label>
+                  <span className="text-[10px] text-muted-foreground font-mono">{formData.stream_path}</span>
+                </div>
                 <div className="grid grid-cols-2 gap-1.5 text-[10px]">
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    className={`h-6 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/ch1/main/av_stream' ? 'border-primary bg-primary/10 text-primary' : ''}`}
+                    className={`h-7 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/Streaming/Channels/102' ? 'border-primary bg-primary/10 text-primary font-semibold' : ''}`}
                     onClick={() => {
-                      const path = '/ch1/main/av_stream';
+                      const path = '/Streaming/Channels/102';
                       setFormData({
                         ...formData,
                         stream_path: path,
@@ -603,13 +644,13 @@ return (
                       });
                     }}
                   >
-                    Hikvision ANPR (/ch1/main)
+                    Hikvision Substream (/102) [Recommended]
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    className={`h-6 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/Streaming/Channels/101' ? 'border-primary bg-primary/10 text-primary' : ''}`}
+                    className={`h-7 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/Streaming/Channels/101' ? 'border-primary bg-primary/10 text-primary font-semibold' : ''}`}
                     onClick={() => {
                       const path = '/Streaming/Channels/101';
                       setFormData({
@@ -619,29 +660,13 @@ return (
                       });
                     }}
                   >
-                    Hikvision IP Cam (/101)
+                    Hikvision Mainstream (/101)
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    className={`h-6 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/ch1/sub/av_stream' ? 'border-primary bg-primary/10 text-primary' : ''}`}
-                    onClick={() => {
-                      const path = '/ch1/sub/av_stream';
-                      setFormData({
-                        ...formData,
-                        stream_path: path,
-                        rtsp_url: buildRtspUrl(formData.username, formData.password, formData.ip_address, formData.port, path)
-                      });
-                    }}
-                  >
-                    Substream (/ch1/sub)
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className={`h-6 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/cam/realmonitor?channel=1&subtype=0' ? 'border-primary bg-primary/10 text-primary' : ''}`}
+                    className={`h-7 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/cam/realmonitor?channel=1&subtype=0' ? 'border-primary bg-primary/10 text-primary font-semibold' : ''}`}
                     onClick={() => {
                       const path = '/cam/realmonitor?channel=1&subtype=0';
                       setFormData({
@@ -651,22 +676,73 @@ return (
                       });
                     }}
                   >
-                    Dahua / GeoVision
+                    Dahua / CP Plus (/cam/realmonitor)
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={`h-7 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/ch1/main/av_stream' ? 'border-primary bg-primary/10 text-primary font-semibold' : ''}`}
+                    onClick={() => {
+                      const path = '/ch1/main/av_stream';
+                      setFormData({
+                        ...formData,
+                        stream_path: path,
+                        rtsp_url: buildRtspUrl(formData.username, formData.password, formData.ip_address, formData.port, path)
+                      });
+                    }}
+                  >
+                    Uniview / Generic (/ch1/main)
                   </Button>
                 </div>
               </div>
             </div>
 
-            <div className="space-y-1">
-              <Label className="text-xs">Direct RTSP Stream URL</Label>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Direct RTSP Stream URL</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleTestRtsp}
+                  disabled={testingRtsp || !formData.ip_address}
+                  className="h-6 text-[10px] px-2 text-primary border-primary/30 hover:bg-primary/10"
+                >
+                  <Activity className={`h-3 w-3 mr-1 ${testingRtsp ? 'animate-spin' : ''}`} />
+                  {testingRtsp ? 'Testing RTSP...' : 'Test RTSP Stream Handshake'}
+                </Button>
+              </div>
+
               <Input
-                placeholder="rtsp://admin:pass@192.168.0.101:554/ch1/main/av_stream"
+                placeholder="rtsp://admin:pass@192.168.10.201:554/Streaming/Channels/102"
                 value={formData.rtsp_url}
                 onChange={(e) => setFormData({ ...formData, rtsp_url: e.target.value })}
                 className="h-8 text-xs font-mono"
               />
+
+              {/* Real RTSP Handshake Diagnostic Feedback */}
+              {rtspTestResult && (
+                <div
+                  className={`text-xs p-2 rounded flex items-center gap-2 ${
+                    rtspTestResult.success
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                      : rtspTestResult.status === 'unauthorized'
+                      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
+                      : 'bg-destructive/10 text-destructive border border-destructive/20'
+                  }`}
+                >
+                  {rtspTestResult.success ? (
+                    <CheckCircle className="h-4 w-4 shrink-0 text-emerald-500" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+                  )}
+                  <span className="font-mono text-[11px] leading-tight">{rtspTestResult.message}</span>
+                </div>
+              )}
+
               <p className="text-[10px] text-muted-foreground">
-                Auto-formatted from credentials above or customized directly. Automatically converted to HLS stream.
+                Auto-formatted from credentials above or customized directly. Converted to live HLS stream for browser & desktop viewing.
               </p>
             </div>
           </div>

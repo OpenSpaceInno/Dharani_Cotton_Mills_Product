@@ -169,6 +169,18 @@ class ApiClient {
     }>(`/cameras/diagnostic/${ip}`);
   }
 
+  async testRtspStream(payload: { ip: string; port?: number; username?: string; password?: string; stream_path?: string }) {
+    return this.request<{
+      success: boolean;
+      status: 'online' | 'unauthorized' | 'not_found' | 'timeout' | 'error' | 'responded';
+      statusCode?: number;
+      message: string;
+    }>('/cameras/test-rtsp', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // RTSP configuration
   async getRTSPConfig(deviceId: string) {
     return this.request<any>(`/rtsp-config/${deviceId}`);

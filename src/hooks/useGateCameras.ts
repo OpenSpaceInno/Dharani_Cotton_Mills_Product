@@ -15,8 +15,8 @@ export function useGateCameras() {
       if (Array.isArray(dbCameras) && dbCameras.length > 0) {
         const fullList: CameraFeed[] = dbCameras.map((c: any, index: number) => {
           const devId = c.device_id || c.id || `cam_${index + 1}`;
-          const ip = c.ip_address || '';
-          const fallbackRtsp = ip ? `rtsp://admin:Password@123@${ip}:554/ch1/main/av_stream` : '';
+          const ip = (c.ip_address || '').includes('@') ? c.ip_address.split('@').pop().trim() : (c.ip_address || '').trim();
+          const fallbackRtsp = ip ? `rtsp://admin:Password@123@${ip}:554/Streaming/Channels/102` : '';
           const directUrl = c.direct_url || c.rtsp_url || fallbackRtsp;
 
           // Normalize HLS URL so it always ends with /index.m3u8 without trailing slashes

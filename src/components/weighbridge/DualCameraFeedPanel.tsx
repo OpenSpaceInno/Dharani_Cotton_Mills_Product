@@ -367,8 +367,21 @@ export const DualCameraFeedPanel = forwardRef<DualCameraFeedPanelHandle, DualCam
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
-          setStreamStatuses(prev => ({ ...prev, [index]: 'standby' }));
-          scheduleReconnect(5000);
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              console.warn(`[Weighbridge Cam ${index + 1}] HLS network error (${data.details}), retrying startLoad...`);
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              console.warn(`[Weighbridge Cam ${index + 1}] HLS media error (${data.details}), recovering...`);
+              hls.recoverMediaError();
+              break;
+            default:
+              console.warn(`[Weighbridge Cam ${index + 1}] Fatal HLS error (${data.details}), scheduling reconnect...`);
+              setStreamStatuses(prev => ({ ...prev, [index]: 'standby' }));
+              scheduleReconnect(3000);
+              break;
+          }
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {

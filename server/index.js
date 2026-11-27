@@ -252,6 +252,106 @@ app.get('/api/cameras/diagnostic/:ip', async (req, res) => {
   }
 });
 
+// Test RTSP stream handshake directly with camera
+app.post('/api/cameras/test-rtsp', async (req, res) => {
+  const { ip, port = 554, username = 'admin', password = '', stream_path = '/Streaming/Channels/102' } = req.body;
+  const cleanIp = (ip || '').includes('@') ? ip.split('@').pop().trim() : (ip || '').trim();
+  const cleanPort = Number(port) || 554;
+  const cleanPath = stream_path.startsWith('/') ? stream_path : `/${stream_path}`;
+
+  if (!cleanIp) {
+    return res.status(400).json({ success: false, message: 'Valid camera IP address is required' });
+  }
+
+  const client = new net.Socket();
+  let resolved = false;
+  let receivedData = '';
+
+  const timer = setTimeout(() => {
+    if (!resolved) {
+      resolved = true;
+      client.destroy();
+      return res.json({
+        success: false,
+        status: 'timeout',
+        message: `Connection timed out connecting to ${cleanIp}:${cleanPort}`
+      });
+    }
+  }, 4000);
+
+  client.on('error', (err) => {
+    if (!resolved) {
+      resolved = true;
+      clearTimeout(timer);
+      client.destroy();
+      return res.json({
+        success: false,
+        status: 'error',
+        message: `Socket error on ${cleanIp}:${cleanPort} - ${err.message}`
+      });
+    }
+  });
+
+  client.connect(cleanPort, cleanIp, () => {
+    // Send RTSP DESCRIBE request
+    const authHeader = username && password 
+      ? `Authorization: Basic ${Buffer.from(`${username}:${password}`).toString('base64')}\r\n` 
+      : '';
+    const describeReq = 
+      `DESCRIBE rtsp://${cleanIp}:${cleanPort}${cleanPath} RTSP/1.0\r\n` +
+      `CSeq: 1\r\n` +
+      `User-Agent: Dharani-Weighbridge/1.0\r\n` +
+      `Accept: application/sdp\r\n` +
+      authHeader +
+      `\r\n`;
+    client.write(describeReq);
+  });
+
+  client.on('data', (data) => {
+    receivedData += data.toString();
+    if (receivedData.includes('\r\n\r\n') || receivedData.includes('RTSP/1.0')) {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        client.destroy();
+
+        const firstLine = receivedData.split('\r\n')[0] || '';
+        const statusCode = parseInt(firstLine.split(' ')[1], 10) || 0;
+
+        if (statusCode === 200) {
+          return res.json({
+            success: true,
+            status: 'online',
+            statusCode,
+            message: `RTSP stream verified! Camera is transmitting live (200 OK)`
+          });
+        } else if (statusCode === 401) {
+          return res.json({
+            success: false,
+            status: 'unauthorized',
+            statusCode,
+            message: `Camera requires authentication (401 Unauthorized) - Check username and password`
+          });
+        } else if (statusCode === 404) {
+          return res.json({
+            success: false,
+            status: 'not_found',
+            statusCode,
+            message: `Stream path '${cleanPath}' not found on camera (404 Not Found) - Try /Streaming/Channels/101 or /Streaming/Channels/102`
+          });
+        } else {
+          return res.json({
+            success: statusCode >= 200 && statusCode < 300,
+            status: 'responded',
+            statusCode,
+            message: `Camera responded with RTSP status ${firstLine}`
+          });
+        }
+      }
+    }
+  });
+});
+
 function getCameraSlug(deviceId = '', name = '') {
   const d = String(deviceId).toLowerCase();
   const n = String(name).toLowerCase();
@@ -5167,12 +5267,23 @@ async function syncMediaMtxConfig() {
       return;
     }
 
-    // Ensure HLS always remuxes and uses fmp4 for instant client playback
+    // Ensure HLS always remuxes and uses fmp4 for instant client playback, and avoid port conflicts
     baseYml = baseYml.replace(/hlsAlwaysRemux:\s*no/gi, 'hlsAlwaysRemux: yes');
     baseYml = baseYml.replace(/hlsVariant:\s*lowLatency/gi, 'hlsVariant: fmp4');
+    baseYml = baseYml.replace(/rtmp:\s*yes/gi, 'rtmp: no');
+    baseYml = baseYml.replace(/srt:\s*yes/gi, 'srt: no');
+    baseYml = baseYml.replace(/webrtc:\s*yes/gi, 'webrtc: no');
+    baseYml = baseYml.replace(/api:\s*no/gi, 'api: yes');
 
     const [cameras] = await pool.query(`
-      SELECT c.*, r.direct_url, r.url AS rtsp_url
+      SELECT c.*, 
+             r.direct_url, 
+             r.url AS rtsp_url,
+             r.username AS rtsp_username,
+             r.password AS rtsp_password,
+             r.port AS rtsp_port,
+             r.stream_path,
+             r.transport
       FROM camera_devices c
       LEFT JOIN device_rtsp_config r ON (c.device_id = r.device_id OR c.id = r.device_id)
       ORDER BY c.created_at
@@ -5194,7 +5305,7 @@ async function syncMediaMtxConfig() {
           const u = cam.rtsp_username || 'admin';
           const p = cam.rtsp_password || 'Password@123';
           const port = cam.rtsp_port || 554;
-          const stream = cam.stream_path || '/ch1/main/av_stream';
+          const stream = cam.stream_path || '/Streaming/Channels/102';
           const cleanStream = stream.startsWith('/') ? stream : `/${stream}`;
           rtsp = `rtsp://${u}:${p}@${cleanCamIp}:${port}${cleanStream}`;
         }
@@ -5253,10 +5364,12 @@ function checkAndStartMediaMtx() {
     if (exePath && ymlPath) {
       console.log('🔄 Spawning MediaMTX HLS Gateway from', exePath, 'with config', ymlPath);
       try {
+        const logFile = path.resolve(appDataRoot, 'mediamtx.log');
+        const out = fs.openSync(logFile, 'a');
         const child = spawn(exePath, [ymlPath], {
           cwd: appDataRoot,
           detached: true,
-          stdio: 'ignore'
+          stdio: ['ignore', out, out]
         });
         child.unref();
       } catch (err) {
@@ -5286,7 +5399,7 @@ for (const dPath of candidateDistPaths) {
     console.log(`📦 Serving compiled UI bundle from ${dPath}`);
     app.use(express.static(dPath));
     app.get('*', (req, res, next) => {
-      if (req.path.startsWith('/api') || req.path.startsWith('/snapshots')) {
+      if (req.path.startsWith('/api') || req.path.startsWith('/snapshots') || req.path.startsWith('/hls')) {
         return next();
       }
       res.sendFile(path.join(dPath, 'index.html'));

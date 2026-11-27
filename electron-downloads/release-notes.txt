@@ -1,12 +1,12 @@
 ================================================================================
 Dharani Weighbridge Desktop Application — Release Notes
 ================================================================================
-Version: 1.0.5
+Version: 1.0.6
 Architecture: Windows x64 (64-bit)
 Target OS: Windows 10 / Windows 11 / Windows Server 2016+
-Package Type: Production NSIS Installer (Dharani-Weighbridge-Setup-1.0.5-x64.exe)
+Package Type: Production NSIS Installer (Dharani-Weighbridge-Setup-1.0.6-x64.exe)
 Installer Size: ~141.88 MB
-SHA-256: 569e0e873f4cc29b416339284ba04555ea72876ba67e2483941cf77850854a51
+SHA-256: 0b10779a763936d7c8e7bbf8b8a06dbfa2ca9aae6129f699da1f97a2ed27c7ed
 Release Date: 2026-11-27
 
 ================================================================================
@@ -40,7 +40,7 @@ KEY FEATURES & CAPABILITIES
 ================================================================================
 INSTALLATION & FIRST-RUN SETUP
 ================================================================================
-1. Double-click 'Dharani-Weighbridge-Setup-1.0.5-x64.exe' and follow the installation wizard.
+1. Double-click 'Dharani-Weighbridge-Setup-1.0.6-x64.exe' and follow the installation wizard.
 2. Select your destination directory and create desktop / start menu shortcuts.
 3. Open or edit your configuration at:
    %APPDATA%\Dharani Weighbridge\server.env
