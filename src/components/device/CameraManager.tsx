@@ -30,6 +30,7 @@ export const CameraManager: React.FC = () => {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { reachable: boolean; message: string; ports?: any }>>({});
   const [testingRtsp, setTestingRtsp] = useState(false);
+  const [isAutoDetecting, setIsAutoDetecting] = useState(false);
   const [rtspTestResult, setRtspTestResult] = useState<{ success: boolean; status: string; message: string } | null>(null);
 
   // Dialog state
@@ -170,6 +171,47 @@ export const CameraManager: React.FC = () => {
       toast.error(msg);
     } finally {
       setTestingRtsp(false);
+    }
+  };
+
+  const handleAutoDetectInModal = async () => {
+    const rawIp = formData.ip_address.trim();
+    const cleanIp = rawIp.includes('@') ? rawIp.split('@').pop()?.trim() || '' : rawIp;
+    if (!cleanIp) {
+      toast.error('Please enter a valid camera IP address first.');
+      return;
+    }
+    setIsAutoDetecting(true);
+    setRtspTestResult(null);
+    toast.info(`Scanning RTSP stream paths on ${cleanIp}...`);
+    try {
+      const res = await api.autoDetectCameraStream({
+        device_id: formData.device_id,
+        ip: cleanIp,
+        username: formData.username,
+        password: formData.password,
+        auto_apply: false
+      });
+      if (res && res.success) {
+        setFormData(prev => ({
+          ...prev,
+          stream_path: res.matched_path,
+          port: res.matched_port,
+          rtsp_url: res.direct_url
+        }));
+        setRtspTestResult({
+          success: true,
+          status: res.match.status,
+          message: res.message
+        });
+        toast.success(res.message);
+      } else {
+        toast.error('Could not auto-detect camera stream. Please check camera network or credentials.');
+      }
+    } catch (err: any) {
+      toast.error('Auto-detect error: ' + (err.message || 'Failed'));
+    } finally {
+      setIsAutoDetecting(false);
     }
   };
 
@@ -626,10 +668,88 @@ return (
               {/* Stream Presets */}
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <Label className="text-[11px]">Stream Path Preset</Label>
-                  <span className="text-[10px] text-muted-foreground font-mono">{formData.stream_path}</span>
+                  <Label className="text-[11px] font-semibold">Stream Path Preset</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAutoDetectInModal}
+                    disabled={isAutoDetecting || !formData.ip_address}
+                    className="h-6 text-[10px] px-2 text-emerald-600 dark:text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/10 font-medium"
+                  >
+                    <Activity className={`h-3 w-3 mr-1 ${isAutoDetecting ? 'animate-spin' : ''}`} />
+                    {isAutoDetecting ? 'Scanning...' : '⚡ Auto-Detect Stream Path'}
+                  </Button>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={`h-7 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/live/ch0' ? 'border-primary bg-primary/10 text-primary font-semibold' : ''}`}
+                    onClick={() => {
+                      const path = '/live/ch0';
+                      setFormData({
+                        ...formData,
+                        stream_path: path,
+                        port: 554,
+                        rtsp_url: buildRtspUrl(formData.username, formData.password, formData.ip_address, 554, path)
+                      });
+                    }}
+                  >
+                    CTOCAM / GV Main (/live/ch0)
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={`h-7 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/live/ch1' ? 'border-primary bg-primary/10 text-primary font-semibold' : ''}`}
+                    onClick={() => {
+                      const path = '/live/ch1';
+                      setFormData({
+                        ...formData,
+                        stream_path: path,
+                        port: 554,
+                        rtsp_url: buildRtspUrl(formData.username, formData.password, formData.ip_address, 554, path)
+                      });
+                    }}
+                  >
+                    CTOCAM / GV Sub (/live/ch1)
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={`h-7 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/stream1' ? 'border-primary bg-primary/10 text-primary font-semibold' : ''}`}
+                    onClick={() => {
+                      const path = '/stream1';
+                      setFormData({
+                        ...formData,
+                        stream_path: path,
+                        port: 554,
+                        rtsp_url: buildRtspUrl(formData.username, formData.password, formData.ip_address, 554, path)
+                      });
+                    }}
+                  >
+                    CTOCAM ONVIF (/stream1)
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={`h-7 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/CH001.sdp' ? 'border-primary bg-primary/10 text-primary font-semibold' : ''}`}
+                    onClick={() => {
+                      const path = '/CH001.sdp';
+                      setFormData({
+                        ...formData,
+                        stream_path: path,
+                        port: 8554,
+                        rtsp_url: buildRtspUrl(formData.username, formData.password, formData.ip_address, 8554, path)
+                      });
+                    }}
+                  >
+                    GeoVision SDP (:8554/CH001.sdp)
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
@@ -640,27 +760,12 @@ return (
                       setFormData({
                         ...formData,
                         stream_path: path,
-                        rtsp_url: buildRtspUrl(formData.username, formData.password, formData.ip_address, formData.port, path)
+                        port: 554,
+                        rtsp_url: buildRtspUrl(formData.username, formData.password, formData.ip_address, 554, path)
                       });
                     }}
                   >
-                    Hikvision Substream (/102) [Recommended]
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className={`h-7 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/Streaming/Channels/101' ? 'border-primary bg-primary/10 text-primary font-semibold' : ''}`}
-                    onClick={() => {
-                      const path = '/Streaming/Channels/101';
-                      setFormData({
-                        ...formData,
-                        stream_path: path,
-                        rtsp_url: buildRtspUrl(formData.username, formData.password, formData.ip_address, formData.port, path)
-                      });
-                    }}
-                  >
-                    Hikvision Mainstream (/101)
+                    Hikvision Substream (/102)
                   </Button>
                   <Button
                     type="button"
@@ -672,27 +777,12 @@ return (
                       setFormData({
                         ...formData,
                         stream_path: path,
-                        rtsp_url: buildRtspUrl(formData.username, formData.password, formData.ip_address, formData.port, path)
+                        port: 554,
+                        rtsp_url: buildRtspUrl(formData.username, formData.password, formData.ip_address, 554, path)
                       });
                     }}
                   >
                     Dahua / CP Plus (/cam/realmonitor)
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className={`h-7 text-[10px] justify-start px-2 font-mono ${formData.stream_path === '/ch1/main/av_stream' ? 'border-primary bg-primary/10 text-primary font-semibold' : ''}`}
-                    onClick={() => {
-                      const path = '/ch1/main/av_stream';
-                      setFormData({
-                        ...formData,
-                        stream_path: path,
-                        rtsp_url: buildRtspUrl(formData.username, formData.password, formData.ip_address, formData.port, path)
-                      });
-                    }}
-                  >
-                    Uniview / Generic (/ch1/main)
                   </Button>
                 </div>
               </div>

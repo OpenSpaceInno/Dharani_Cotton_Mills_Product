@@ -51,6 +51,7 @@ export function LiveFeedViewer({
   const [streamStatus, setStreamStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('connecting');
   const [reconnectCount, setReconnectCount] = useState(0);
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
+  const [isAutoDetecting, setIsAutoDetecting] = useState(false);
 
   // Diagnostic state
   const [checkingDiag, setCheckingDiag] = useState(false);
@@ -250,12 +251,20 @@ export function LiveFeedViewer({
         setStreamStatus('connected');
       };
 
+      let networkRetryCount = 0;
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
-              console.warn(`[${camera.id}] HLS network error (${data.details}), retrying startLoad...`);
-              hls.startLoad();
+              networkRetryCount++;
+              if (networkRetryCount <= 3) {
+                console.warn(`[${camera.id}] HLS network error (${data.details}), retry ${networkRetryCount}/3...`);
+                hls.startLoad();
+              } else {
+                console.warn(`[${camera.id}] HLS stream offline or invalid path (${data.details})`);
+                setStreamStatus('error');
+                scheduleReconnect(5000);
+              }
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
               console.warn(`[${camera.id}] HLS media error (${data.details}), recovering...`);
@@ -264,7 +273,7 @@ export function LiveFeedViewer({
             default:
               console.warn(`[${camera.id}] Fatal HLS stream error (${data.details}), retrying...`);
               setStreamStatus('error');
-              scheduleReconnect(3000);
+              scheduleReconnect(4000);
               break;
           }
         }
@@ -304,6 +313,36 @@ export function LiveFeedViewer({
     setReconnectCount(prev => prev + 1);
     connectHlsStream();
     toast.info(`Connecting to Physical RTSP stream at ${cameraIp}...`);
+  };
+
+  // Auto-detect and bind working RTSP stream path for this camera
+  const handleAutoDetect = async () => {
+    if (!cameraIp) {
+      toast.error('Camera IP address is not configured');
+      return;
+    }
+    setIsAutoDetecting(true);
+    toast.info(`Scanning RTSP stream paths for ${camera.name} at ${cameraIp}...`);
+    try {
+      const res = await api.autoDetectCameraStream({
+        device_id: camera.id,
+        ip: cameraIp,
+        username: rtspConfig?.username || 'admin',
+        password: rtspConfig?.password || '',
+        auto_apply: true
+      });
+      if (res && res.success) {
+        toast.success(res.message);
+        await loadOrCreateRTSPConfig();
+        setReconnectCount(prev => prev + 1);
+      } else {
+        toast.error('Could not auto-detect stream path. Please verify IP and camera power.');
+      }
+    } catch (err: any) {
+      toast.error('Auto-detect error: ' + (err.message || 'Failed'));
+    } finally {
+      setIsAutoDetecting(false);
+    }
   };
 
   // Run hardware socket diagnostic
@@ -502,17 +541,40 @@ export function LiveFeedViewer({
                 )}
               </div>
 
-              {/* Simplified Operator Quick Controls */}
-              <div className="flex items-center justify-center gap-2 pt-2 border-t border-neutral-800">
+              {/* Operator Quick Controls */}
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-2 border-t border-neutral-800">
                 <Button
                   size="sm"
                   variant="default"
-                  className="h-8 text-xs gap-1.5 px-4"
+                  className="h-8 text-xs gap-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-medium shadow-sm"
+                  onClick={handleAutoDetect}
+                  disabled={isAutoDetecting}
+                >
+                  <Activity className={`h-3.5 w-3.5 ${isAutoDetecting ? 'animate-spin' : ''}`} />
+                  {isAutoDetecting ? 'Detecting...' : '⚡ Auto-Detect & Connect'}
+                </Button>
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs gap-1.5 px-3 border-neutral-700 bg-neutral-800/80 hover:bg-neutral-800 text-neutral-200"
                   onClick={handleSwitchToRTSP}
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                   Retry Connection
                 </Button>
+
+                {cameraIp && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 text-xs gap-1.5 px-2.5 text-neutral-400 hover:text-white"
+                    onClick={() => window.open(`http://${cameraIp}`, '_blank')}
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Open Camera Web UI
+                  </Button>
+                )}
               </div>
             </div>
           )}

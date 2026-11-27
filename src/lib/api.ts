@@ -181,6 +181,31 @@ class ApiClient {
     });
   }
 
+  async autoDetectCameraStream(payload: { device_id?: string; ip: string; username?: string; password?: string; auto_apply?: boolean }) {
+    return this.request<{
+      success: boolean;
+      match: any;
+      matched_path: string;
+      matched_port: number;
+      direct_url: string;
+      hls_proxy_url: string;
+      applied: boolean;
+      message: string;
+    }>('/cameras/auto-detect', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getStreamGatewayStatus() {
+    return this.request<{
+      gateway_port: number;
+      api_online: boolean;
+      paths: any[];
+      recent_logs: string;
+    }>('/cameras/stream-status');
+  }
+
   // RTSP configuration
   async getRTSPConfig(deviceId: string) {
     return this.request<any>(`/rtsp-config/${deviceId}`);

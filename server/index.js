@@ -352,6 +352,188 @@ app.post('/api/cameras/test-rtsp', async (req, res) => {
   });
 });
 
+// Helper to probe an RTSP path
+function probeRtspPath(host, port, streamPath, username, password, timeoutMs = 2000) {
+  return new Promise((resolve) => {
+    const s = new net.Socket();
+    let resolved = false;
+    let received = '';
+
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        s.destroy();
+        resolve({ reachable: false, code: 0, status: 'timeout' });
+      }
+    }, timeoutMs);
+
+    s.on('error', (err) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        s.destroy();
+        resolve({ reachable: false, code: 0, status: 'error', error: err.message });
+      }
+    });
+
+    s.connect(port, host, () => {
+      const cleanPath = streamPath.startsWith('/') ? streamPath : `/${streamPath}`;
+      const authHeader = username && password 
+        ? `Authorization: Basic ${Buffer.from(`${username}:${password}`).toString('base64')}\r\n` 
+        : '';
+      const req = 
+        `DESCRIBE rtsp://${host}:${port}${cleanPath} RTSP/1.0\r\n` +
+        `CSeq: 1\r\n` +
+        `User-Agent: Dharani-Weighbridge/1.0\r\n` +
+        `Accept: application/sdp\r\n` +
+        authHeader +
+        `\r\n`;
+      s.write(req);
+    });
+
+    s.on('data', (buf) => {
+      received += buf.toString();
+      if (received.includes('\r\n\r\n') || received.includes('RTSP/1.0')) {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          s.destroy();
+          const firstLine = received.split('\r\n')[0] || '';
+          const code = parseInt(firstLine.split(' ')[1], 10) || 0;
+          resolve({ reachable: true, code, firstLine, raw: received });
+        }
+      }
+    });
+  });
+}
+
+// Auto-detect working RTSP stream path and port for any camera brand (CTOCAM, GeoVision, Hikvision, Dahua, Uniview)
+app.post('/api/cameras/auto-detect', async (req, res) => {
+  try {
+    const { device_id, ip, username = 'admin', password = '', auto_apply = true } = req.body;
+    const cleanIp = (ip || '').includes('@') ? ip.split('@').pop().trim() : (ip || '').trim();
+
+    if (!cleanIp) {
+      return res.status(400).json({ success: false, message: 'Valid camera IP address is required' });
+    }
+
+    const CANDIDATES = [
+      // CTOCAM / GV-DNC5643 & Xiongmai models (Primary for current client setup)
+      { name: 'CTOCAM / GV-DNC5643 MainStream', path: '/live/ch0', port: 554 },
+      { name: 'CTOCAM / GV-DNC5643 SubStream', path: '/live/ch1', port: 554 },
+      { name: 'CTOCAM ONVIF Stream 1', path: '/stream1', port: 554 },
+      { name: 'CTOCAM ONVIF Stream 2', path: '/stream2', port: 554 },
+      { name: 'GeoVision RTSP Main (Port 8554)', path: '/CH001.sdp', port: 8554 },
+      { name: 'GeoVision RTSP Sub (Port 8554)', path: '/CH002.sdp', port: 8554 },
+      { name: 'GeoVision RTSP Main (Port 554)', path: '/CH001.sdp', port: 554 },
+      { name: 'GeoVision RTSP Sub (Port 554)', path: '/CH002.sdp', port: 554 },
+      // Hikvision models
+      { name: 'Hikvision Substream (/102)', path: '/Streaming/Channels/102', port: 554 },
+      { name: 'Hikvision Mainstream (/101)', path: '/Streaming/Channels/101', port: 554 },
+      // Dahua / CP Plus models
+      { name: 'Dahua / CP Plus Stream', path: '/cam/realmonitor?channel=1&subtype=0', port: 554 },
+      // Uniview / Generic models
+      { name: 'Uniview / Standard RTSP', path: '/ch1/main/av_stream', port: 554 },
+    ];
+
+    let match = null;
+    const probeResults = [];
+
+    // Probe sequentially with fast timeout
+    for (const cand of CANDIDATES) {
+      const probe = await probeRtspPath(cleanIp, cand.port, cand.path, username, password, 1500);
+      probeResults.push({ ...cand, ...probe });
+      if (probe.code === 200) {
+        match = { ...cand, status: '200 OK', verified: true };
+        break; // Definitive 200 OK match found!
+      } else if (probe.code === 401 && !match) {
+        // Path recognized by camera RTSP server (401 proves path exists)
+        match = { ...cand, status: '401 Unauthorized', verified: false, note: 'RTSP path acknowledged by camera' };
+      }
+    }
+
+    if (!match) {
+      const anyConnected = probeResults.some(r => r.reachable);
+      const chosen = CANDIDATES[0]; // Default to CTOCAM /live/ch0
+      match = {
+        ...chosen,
+        status: anyConnected ? 'default_fallback' : 'unreachable',
+        verified: false,
+        note: anyConnected ? 'Camera port reached, defaulting to CTOCAM standard /live/ch0' : 'Camera offline'
+      };
+    }
+
+    const matchedPath = match.path;
+    const matchedPort = match.port;
+    const rtspUser = username || 'admin';
+    const rtspPass = password || '';
+    const creds = rtspUser && rtspPass ? `${rtspUser}:${rtspPass}@` : (rtspUser ? `${rtspUser}@` : '');
+    const directUrl = `rtsp://${creds}${cleanIp}:${matchedPort}${matchedPath}`;
+    const slug = device_id ? getCameraSlug(device_id) : 'cam1';
+    const hlsProxyUrl = `http://localhost:8888/${slug}/index.m3u8`;
+
+    if (auto_apply && device_id) {
+      await pool.query(`
+        UPDATE device_rtsp_config 
+        SET url = ?, direct_url = ?, port = ?, stream_path = ?, username = ?, password = ?, updated_at = NOW()
+        WHERE device_id = ? OR device_id = ?
+      `, [directUrl, directUrl, matchedPort, matchedPath, rtspUser, rtspPass, device_id, slug]);
+
+      await pool.query(`
+        UPDATE camera_devices 
+        SET ip_address = ?, status = 'online', updated_at = NOW()
+        WHERE device_id = ? OR id = ?
+      `, [cleanIp, device_id, device_id]);
+
+      await syncMediaMtxConfig().catch(() => {});
+      restartMediaMtx();
+    }
+
+    res.json({
+      success: true,
+      match,
+      matched_path: matchedPath,
+      matched_port: matchedPort,
+      direct_url: directUrl,
+      hls_proxy_url: hlsProxyUrl,
+      applied: Boolean(auto_apply && device_id),
+      message: `Detected stream preset: ${match.name} (${matchedPath} on port ${matchedPort})`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Real-time MediaMTX and camera gateway status
+app.get('/api/cameras/stream-status', async (req, res) => {
+  try {
+    let apiData = null;
+    try {
+      const apiReq = await fetch('http://127.0.0.1:9997/v3/paths/list', { signal: AbortSignal.timeout(1500) });
+      if (apiReq.ok) apiData = await apiReq.json();
+    } catch {}
+
+    let logSnippet = '';
+    const logPath = path.resolve(appDataRoot, 'mediamtx.log');
+    if (fs.existsSync(logPath)) {
+      try {
+        const full = fs.readFileSync(logPath, 'utf8');
+        const lines = full.split('\n').filter(Boolean);
+        logSnippet = lines.slice(-25).join('\n');
+      } catch {}
+    }
+
+    res.json({
+      gateway_port: 8888,
+      api_online: Boolean(apiData),
+      paths: apiData?.items || [],
+      recent_logs: logSnippet,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 function getCameraSlug(deviceId = '', name = '') {
   const d = String(deviceId).toLowerCase();
   const n = String(name).toLowerCase();

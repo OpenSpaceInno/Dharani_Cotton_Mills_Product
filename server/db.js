@@ -278,23 +278,31 @@ async function initializeDatabase() {
         SET ip_address = SUBSTRING_INDEX(ip_address, '@', -1)
         WHERE ip_address LIKE '%@%'
       `);
+      // Update any obsolete stream paths to CTOCAM / GeoVision standard /live/ch0
+      await dbConnection.query(`
+        UPDATE device_rtsp_config 
+        SET stream_path = '/live/ch0',
+            url = REPLACE(REPLACE(url, '/ch1/main/av_stream', '/live/ch0'), '/rtsp/streaming?channel=01&subtype=0', '/live/ch0'),
+            direct_url = REPLACE(REPLACE(direct_url, '/ch1/main/av_stream', '/live/ch0'), '/rtsp/streaming?channel=01&subtype=0', '/live/ch0')
+        WHERE stream_path LIKE '%ch1/main%' OR stream_path LIKE '%/rtsp/streaming%'
+      `);
     } catch (_) {}
 
     // Ensure default camera devices exist (INSERT IGNORE so user changes are NEVER overwritten on restart)
     await dbConnection.query(`
       INSERT IGNORE INTO camera_devices (device_id, name, model, location, ip_address, status)
       VALUES 
-        ('cam_gate_1', 'Gate 1 Inbound ANPR Camera', 'Hikvision / GeoVision ANPR', 'Main Inbound Gate', '192.168.10.201', 'online'),
+        ('cam_gate_1', 'Gate 1 Inbound ANPR Camera', 'CTOCAM / GeoVision ANPR', 'Main Inbound Gate', '192.168.10.201', 'online'),
         ('cam_scale_1', 'Weighbridge Scale Overhead Cam', 'Industrial IP CCTV Bullet', 'Weighbridge Platform 1', '192.168.10.202', 'online'),
-        ('cam_gate_3', 'Camera 3 (Overview / Platform 2)', 'Hikvision Overview Camera', 'Weighbridge Platform 3', '192.168.10.203', 'online')
+        ('cam_gate_3', 'Camera 3 (Overview / Platform 2)', 'Overview Camera', 'Weighbridge Platform 3', '192.168.10.203', 'online')
     `);
 
     await dbConnection.query(`
       INSERT IGNORE INTO device_rtsp_config (device_id, url, direct_url, hls_proxy_url, stream_path, port, enabled)
       VALUES 
-        ('cam_gate_1', 'rtsp://admin:Password@123@192.168.10.201:554/Streaming/Channels/102', 'rtsp://admin:Password@123@192.168.10.201:554/Streaming/Channels/102', 'http://localhost:8888/cam1/index.m3u8', '/Streaming/Channels/102', 554, 1),
-        ('cam_scale_1', 'rtsp://admin:Password@123@192.168.10.202:554/Streaming/Channels/102', 'rtsp://admin:Password@123@192.168.10.202:554/Streaming/Channels/102', 'http://localhost:8888/cam2/index.m3u8', '/Streaming/Channels/102', 554, 1),
-        ('cam_gate_3', 'rtsp://admin:Password@123@192.168.10.203:554/Streaming/Channels/102', 'rtsp://admin:Password@123@192.168.10.203:554/Streaming/Channels/102', 'http://localhost:8888/cam3/index.m3u8', '/Streaming/Channels/102', 554, 1)
+        ('cam_gate_1', 'rtsp://admin:Password@123@192.168.10.201:554/live/ch0', 'rtsp://admin:Password@123@192.168.10.201:554/live/ch0', 'http://localhost:8888/cam1/index.m3u8', '/live/ch0', 554, 1),
+        ('cam_scale_1', 'rtsp://admin:Password@123@192.168.10.202:554/live/ch0', 'rtsp://admin:Password@123@192.168.10.202:554/live/ch0', 'http://localhost:8888/cam2/index.m3u8', '/live/ch0', 554, 1),
+        ('cam_gate_3', 'rtsp://admin:Password@123@192.168.10.203:554/live/ch0', 'rtsp://admin:Password@123@192.168.10.203:554/live/ch0', 'http://localhost:8888/cam3/index.m3u8', '/live/ch0', 554, 1)
     `);
 
     // Create weighbridge_devices table

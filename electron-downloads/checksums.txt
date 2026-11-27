@@ -1,1 +1,1 @@
-0b10779a763936d7c8e7bbf8b8a06dbfa2ca9aae6129f699da1f97a2ed27c7ed *Dharani-Weighbridge-Setup-1.0.6-x64.exe
+668c2f3981cfcc9180aaea76dee3b2e6612332a3c3ff51c2a669a5f5319b270d *Dharani-Weighbridge-Setup-1.0.7-x64.exe
