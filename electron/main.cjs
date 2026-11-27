@@ -137,8 +137,32 @@ function injectClientEnv() {
     try { fs.mkdirSync(APP_DATA_DIR, { recursive: true }); } catch (_) {}
   }
 
-  // If client env file exists, inject it into process.env WITHOUT overriding values
-  // that may have been set by the installer/update wizard already.
+  // If client env file does not exist, create it with standard production defaults
+  if (!fs.existsSync(SERVER_ENV_PATH)) {
+    const defaultEnvContent = [
+      '# Dharani Weighbridge Local Database & Sync Configuration',
+      'NODE_ENV=production',
+      'PORT=3001',
+      'DB_HOST=localhost',
+      'DB_PORT=3306',
+      'DB_USER=root',
+      'DB_PASSWORD=dharani_db_pass',
+      'DB_NAME=dharani_weighbridge',
+      'PLANT_ID=PL01',
+      'CLOUD_SYNC_ENABLED=true',
+      'CLOUD_SYNC_INTERVAL_MS=300000',
+      'CLOUD_SERVER_URL=https://cqvx5creel6qszofre5h3ofv.213.210.37.249.sslip.io',
+      'CLOUD_SYNC_SECRET=Aparna_RMC_Cloud_Sync_Secret_2026!'
+    ].join('\n') + '\n';
+    try {
+      fs.writeFileSync(SERVER_ENV_PATH, defaultEnvContent, 'utf8');
+      console.log(`[Electron] Generated default server.env at ${SERVER_ENV_PATH}`);
+    } catch (e) {
+      console.warn(`[Electron] Could not write default server.env:`, e.message);
+    }
+  }
+
+  // Inject client env file into process.env so client-configured credentials take effect
   if (fs.existsSync(SERVER_ENV_PATH)) {
     const lines = fs.readFileSync(SERVER_ENV_PATH, 'utf8').split(/\r?\n/);
     for (const line of lines) {
@@ -148,13 +172,16 @@ function injectClientEnv() {
       if (idx === -1) continue;
       const key = trimmed.slice(0, idx).trim();
       const val = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
-      if (key && !(key in process.env)) {
+      if (key && val) {
         process.env[key] = val;
       }
     }
     console.log(`[Electron] Client env loaded from ${SERVER_ENV_PATH}`);
-  } else {
-    console.log(`[Electron] No client env at ${SERVER_ENV_PATH} — server uses defaults / packaged env.`);
+  }
+
+  // Ensure DB_PASSWORD is never empty
+  if (!process.env.DB_PASSWORD) {
+    process.env.DB_PASSWORD = 'dharani_db_pass';
   }
 }
 

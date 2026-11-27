@@ -11,7 +11,9 @@ const poolConfigBase = {
   host: process.env.DB_HOST || 'localhost',
   port: Number(process.env.DB_PORT) || 3306,
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD ?? '',
+  password: (process.env.DB_PASSWORD !== undefined && process.env.DB_PASSWORD !== '') 
+    ? process.env.DB_PASSWORD 
+    : 'dharani_db_pass',
   waitForConnections: true,
   connectionLimit: Number(process.env.DB_POOL_SIZE) || 10,
   queueLimit: 0,
