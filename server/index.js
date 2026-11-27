@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import * as ftp from 'basic-ftp';
 import { pool, testConnection, initializeDatabase, recordSyncTombstone } from './db.js';
 import anprProcessor from './anpr-processor.js';
@@ -97,6 +97,12 @@ app.use('/api/sync', syncRouter);
 
 // Proxy /hls requests to MediaMTX HLS Gateway on port 8888
 app.use('/hls', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
   const options = {
     hostname: '127.0.0.1',
     port: 8888,
@@ -5122,11 +5128,48 @@ app.post('/api/auth/change-password', async (req, res) => {
   }
 });
 
+// Active MediaMTX config path in AppData to guarantee write permissions
+const activeMtxYmlPath = path.resolve(appDataRoot, 'mediamtx.yml');
+
+function getMediaMtxTemplateYml() {
+  const candidateYmlPaths = [
+    path.resolve(__dirname, '..', 'mediamtx.yml'),
+    path.resolve(__dirname, 'mediamtx.yml'),
+    process.resourcesPath ? path.resolve(process.resourcesPath, 'mediamtx.yml') : null,
+    process.resourcesPath ? path.resolve(process.resourcesPath, 'bin', 'mediamtx.yml') : null,
+    path.resolve(process.cwd(), 'mediamtx.yml')
+  ].filter(Boolean);
+  return candidateYmlPaths.find(p => fs.existsSync(p));
+}
+
+function getMediaMtxExe() {
+  const candidateExePaths = [
+    process.resourcesPath ? path.resolve(process.resourcesPath, 'mediamtx.exe') : null,
+    path.resolve(__dirname, '..', 'mediamtx.exe'),
+    path.resolve(__dirname, 'mediamtx.exe'),
+    process.resourcesPath ? path.resolve(process.resourcesPath, 'bin', 'mediamtx.exe') : null,
+    path.resolve(process.cwd(), 'mediamtx.exe')
+  ].filter(Boolean);
+  return candidateExePaths.find(p => fs.existsSync(p));
+}
+
 // Keep mediamtx.yml synchronized with MySQL camera devices
 async function syncMediaMtxConfig() {
   try {
-    const ymlPath = path.resolve(__dirname, '..', 'mediamtx.yml');
-    if (!fs.existsSync(ymlPath)) return;
+    const templatePath = getMediaMtxTemplateYml();
+    let baseYml = '';
+    if (fs.existsSync(activeMtxYmlPath)) {
+      baseYml = fs.readFileSync(activeMtxYmlPath, 'utf8');
+    } else if (templatePath && fs.existsSync(templatePath)) {
+      baseYml = fs.readFileSync(templatePath, 'utf8');
+    } else {
+      console.warn('⚠️ No mediamtx.yml template found to sync.');
+      return;
+    }
+
+    // Ensure HLS always remuxes and uses fmp4 for instant client playback
+    baseYml = baseYml.replace(/hlsAlwaysRemux:\s*no/gi, 'hlsAlwaysRemux: yes');
+    baseYml = baseYml.replace(/hlsVariant:\s*lowLatency/gi, 'hlsVariant: fmp4');
 
     const [cameras] = await pool.query(`
       SELECT c.*, r.direct_url, r.url AS rtsp_url
@@ -5135,12 +5178,11 @@ async function syncMediaMtxConfig() {
       ORDER BY c.created_at
     `);
 
-    let content = fs.readFileSync(ymlPath, 'utf8');
     const pathsMarker = 'paths:';
-    const pathsIdx = content.indexOf(pathsMarker);
+    const pathsIdx = baseYml.indexOf(pathsMarker);
     if (pathsIdx === -1) return;
 
-    const prePaths = content.substring(0, pathsIdx + pathsMarker.length);
+    const prePaths = baseYml.substring(0, pathsIdx + pathsMarker.length);
 
     let pathsYaml = '\n';
     cameras.forEach((cam, idx) => {
@@ -5176,10 +5218,13 @@ async function syncMediaMtxConfig() {
     pathsYaml += `  all_others:\n`;
 
     const newContent = prePaths + pathsYaml;
-    if (newContent !== content) {
-      fs.writeFileSync(ymlPath, newContent, 'utf8');
-      console.log('🔄 Synced mediamtx.yml with', cameras.length, 'cameras from database');
+    const currentOnDisk = fs.existsSync(activeMtxYmlPath) ? fs.readFileSync(activeMtxYmlPath, 'utf8') : '';
+    if (newContent !== currentOnDisk) {
+      fs.writeFileSync(activeMtxYmlPath, newContent, 'utf8');
+      console.log('🔄 Synced mediamtx.yml with', cameras.length, 'cameras from database at', activeMtxYmlPath);
       restartMediaMtx();
+    } else {
+      checkAndStartMediaMtx();
     }
   } catch (err) {
     console.warn('Could not sync MediaMTX configuration:', err.message);
@@ -5188,7 +5233,6 @@ async function syncMediaMtxConfig() {
 
 function restartMediaMtx() {
   try {
-    const { execSync } = require('child_process');
     execSync('taskkill /F /IM mediamtx.exe /T 2>nul || exit 0', { shell: 'cmd.exe' });
   } catch {}
   setTimeout(checkAndStartMediaMtx, 1500);
@@ -5203,31 +5247,14 @@ function checkAndStartMediaMtx() {
 
   tester.on('error', () => {
     tester.destroy();
-    const candidateExePaths = [
-      path.resolve(__dirname, '..', 'mediamtx.exe'),
-      path.resolve(__dirname, 'mediamtx.exe'),
-      process.resourcesPath ? path.resolve(process.resourcesPath, 'mediamtx.exe') : null,
-      process.resourcesPath ? path.resolve(process.resourcesPath, 'bin', 'mediamtx.exe') : null,
-      path.resolve(process.cwd(), 'mediamtx.exe')
-    ].filter(Boolean);
-
-    const exePath = candidateExePaths.find(p => fs.existsSync(p));
-
-    const candidateYmlPaths = [
-      path.resolve(__dirname, '..', 'mediamtx.yml'),
-      path.resolve(__dirname, 'mediamtx.yml'),
-      process.resourcesPath ? path.resolve(process.resourcesPath, 'mediamtx.yml') : null,
-      process.resourcesPath ? path.resolve(process.resourcesPath, 'bin', 'mediamtx.yml') : null,
-      path.resolve(process.cwd(), 'mediamtx.yml')
-    ].filter(Boolean);
-
-    const ymlPath = candidateYmlPaths.find(p => fs.existsSync(p));
+    const exePath = getMediaMtxExe();
+    const ymlPath = fs.existsSync(activeMtxYmlPath) ? activeMtxYmlPath : getMediaMtxTemplateYml();
 
     if (exePath && ymlPath) {
-      console.log('🔄 Spawning MediaMTX HLS Gateway from', exePath);
+      console.log('🔄 Spawning MediaMTX HLS Gateway from', exePath, 'with config', ymlPath);
       try {
         const child = spawn(exePath, [ymlPath], {
-          cwd: path.dirname(exePath),
+          cwd: appDataRoot,
           detached: true,
           stdio: 'ignore'
         });
@@ -5235,6 +5262,8 @@ function checkAndStartMediaMtx() {
       } catch (err) {
         console.warn('Could not auto-start mediamtx.exe:', err.message);
       }
+    } else {
+      console.warn('⚠️ MediaMTX binary or config not found (exe:', exePath, 'yml:', ymlPath, ')');
     }
   });
 }
@@ -5289,8 +5318,8 @@ async function startServer() {
     }
 
     if (connected) {
-      await syncMediaMtxConfig().catch(() => {});
       await initializeDatabase().catch(() => {});
+      await syncMediaMtxConfig().catch(() => {});
     } else {
       console.log('⚠️  Warning: Database connection failed. Please check MySQL configuration.');
     }

@@ -48,8 +48,7 @@ export function LiveFeedViewer({
   const [rtspConfig, setRtspConfig] = useState<RTSPConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
-  const [streamStatus, setStreamStatus] = useState<'idle' | 'connecting' | 'connected' | 'error' | 'simulated'>('simulated');
-  const [feedMode, setFeedMode] = useState<'rtsp' | 'simulated'>('rtsp');
+  const [streamStatus, setStreamStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('connecting');
   const [reconnectCount, setReconnectCount] = useState(0);
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
 
@@ -68,22 +67,7 @@ export function LiveFeedViewer({
   const reconnectTimerRef = useRef<any>(null);
 
   const cameraIp = camera.ip_address || camera.ipAddress || (camera as any).ip || '';
-  const defaultPlate = camera.id === 'cam_gate_1' ? 'MH 12 RN 4501' : (camera.id === 'cam_scale_1' ? 'TN 15 MF 2815' : 'KA 04 MM 9123');
   const laneType = camera.location?.toLowerCase().includes('exit') ? 'exit' : 'entry';
-
-  // Live Canvas-to-Video Simulation Hook
-  const { isSimulating, startSimulation, stopSimulation } = useSimulatedFeed({
-    videoRef,
-    cameraName: camera.name,
-    laneType,
-    plateNumber: defaultPlate,
-  });
-
-  // Start live stream immediately on mount so video is active at once
-  useEffect(() => {
-    startSimulation();
-    setStreamStatus('simulated');
-  }, [startSimulation]);
 
   // Live clock
   useEffect(() => {
@@ -191,11 +175,16 @@ export function LiveFeedViewer({
 
   // Connect HLS Stream (with resilient auto-reconnect without refresh)
   const connectHlsStream = useCallback(() => {
-    if (feedMode === 'simulated') return;
     if (!rtspConfig?.hlsProxyUrl || !videoRef.current) return;
 
     const video = videoRef.current;
+    if (video.srcObject) {
+      video.srcObject = null;
+    }
     video.muted = true;
+    video.defaultMuted = true;
+    video.setAttribute('muted', '');
+    video.setAttribute('playsinline', '');
     video.playsInline = true;
 
     if (reconnectTimerRef.current) {
@@ -204,16 +193,18 @@ export function LiveFeedViewer({
     }
 
     if (hlsRef.current) {
-      hlsRef.current.destroy();
+      try {
+        hlsRef.current.destroy();
+      } catch (_) {}
       hlsRef.current = null;
     }
+
+    setStreamStatus(prev => prev === 'connected' ? prev : 'connecting');
 
     const scheduleReconnect = (delayMs = 5000) => {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = setTimeout(() => {
-        if (feedMode === 'rtsp') {
-          connectHlsStream();
-        }
+        connectHlsStream();
       }, delayMs);
     };
 
@@ -224,11 +215,11 @@ export function LiveFeedViewer({
         enableWorker: true,
         lowLatencyMode: true,
         backBufferLength: 30,
-        manifestLoadingTimeOut: 4000,
-        manifestLoadingMaxRetry: 3,
+        manifestLoadingTimeOut: 6000,
+        manifestLoadingMaxRetry: 5,
         manifestLoadingRetryDelay: 1500,
-        levelLoadingTimeOut: 4000,
-        fragLoadingTimeOut: 4000,
+        levelLoadingTimeOut: 6000,
+        fragLoadingTimeOut: 6000,
       });
 
       hlsRef.current = hls;
@@ -237,88 +228,69 @@ export function LiveFeedViewer({
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         console.log(`[${camera.id}] ✅ HLS manifest parsed successfully`);
-        stopSimulation();
         setStreamStatus('connected');
         video.muted = true;
         video.play().catch(e => console.warn('Autoplay error:', e));
       });
 
       hls.on(Hls.Events.FRAG_LOADED, () => {
-        stopSimulation();
         setStreamStatus('connected');
       });
 
       video.onplaying = () => {
-        stopSimulation();
         setStreamStatus('connected');
       };
 
       video.onloadeddata = () => {
-        stopSimulation();
         setStreamStatus('connected');
       };
 
       video.oncanplay = () => {
         video.play().catch(() => {});
-        stopSimulation();
         setStreamStatus('connected');
       };
 
-      hls.on(Hls.Events.ERROR, (event, data) => {
+      hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
-          // Maintain seamless live stream if physical stream is not on same network
-          startSimulation();
-          setStreamStatus('simulated');
-          scheduleReconnect(6000);
+          console.warn(`[${camera.id}] HLS stream offline or retrying:`, data.details);
+          setStreamStatus('error');
+          scheduleReconnect(5000);
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = targetUrl;
       video.addEventListener('loadedmetadata', () => {
-        stopSimulation();
         setStreamStatus('connected');
         video.play().catch(e => console.warn('Safari autoplay error:', e));
       });
       video.addEventListener('error', () => {
+        setStreamStatus('error');
         scheduleReconnect(5000);
       });
     }
-  }, [rtspConfig?.hlsProxyUrl, camera.id, feedMode, startSimulation, stopSimulation]);
+  }, [rtspConfig?.hlsProxyUrl, camera.id]);
 
   useEffect(() => {
-    if (feedMode === 'rtsp') {
-      connectHlsStream();
-    }
+    connectHlsStream();
     return () => {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
       if (hlsRef.current) {
-        hlsRef.current.destroy();
+        try {
+          hlsRef.current.destroy();
+        } catch (_) {}
         hlsRef.current = null;
       }
     };
-  }, [rtspConfig?.hlsProxyUrl, reconnectCount, feedMode, connectHlsStream]);
-
-  // Activate Simulated Live Preview Feed
-  const handleStartSimulation = () => {
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-    setFeedMode('simulated');
-    setStreamStatus('simulated');
-    startSimulation();
-    toast.success(`Started Live Gate Simulation on ${camera.name}`);
-  };
+  }, [rtspConfig?.hlsProxyUrl, reconnectCount, connectHlsStream]);
 
   // Switch back to Physical RTSP stream
   const handleSwitchToRTSP = () => {
-    stopSimulation();
-    setFeedMode('rtsp');
     setStreamStatus('connecting');
     setReconnectCount(prev => prev + 1);
+    connectHlsStream();
     toast.info(`Connecting to Physical RTSP stream at ${cameraIp}...`);
   };
 
@@ -382,25 +354,35 @@ export function LiveFeedViewer({
     toast.success(`ANPR Plate Captured: ${picked.plate} (${(picked.conf * 100).toFixed(0)}%)`);
   };
 
-  const isVideoLive = true;
+  const isVideoLive = streamStatus === 'connected';
 
   return (
     <Card className="overflow-hidden border-border/80 shadow-md flex flex-col justify-between">
       <CardHeader className="pb-3 bg-card/60 border-b">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Radio className="h-4 w-4 text-emerald-500 animate-pulse" />
+            <Radio className={`h-4 w-4 ${streamStatus === 'connected' ? 'text-emerald-500 animate-pulse' : (streamStatus === 'connecting' ? 'text-amber-500' : 'text-muted-foreground')}`} />
             <CardTitle className="text-base font-semibold">{camera.name}</CardTitle>
           </div>
           <div className="flex items-center gap-2">
-            <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 gap-1 font-mono">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              RTSP LIVE
-            </Badge>
+            {streamStatus === 'connected' ? (
+              <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 gap-1 font-mono">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                RTSP LIVE
+              </Badge>
+            ) : streamStatus === 'connecting' ? (
+              <Badge variant="outline" className="border-amber-500/30 text-amber-400 gap-1 font-mono">
+                <RefreshCw className="h-3 w-3 animate-spin text-amber-400" />
+                CONNECTING
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="border-rose-500/30 text-rose-400 gap-1 font-mono">
+                <span className="h-2 w-2 rounded-full bg-rose-500 mr-1" />
+                OFFLINE
+              </Badge>
+            )}
           </div>
         </div>
-
-        {/* Technical IP, Demo Feed, Web UI, and Config controls hidden per operator view requirements */}
       </CardHeader>
 
       <CardContent className="p-0 flex-1 flex flex-col justify-between bg-black">
@@ -415,18 +397,20 @@ export function LiveFeedViewer({
             controls={false}
           />
 
-          {/* Connected / Simulated Live HUD */}
+          {/* Connected Live HUD */}
           {isVideoLive && (
             <>
               {/* Top HUD */}
               <div className="absolute top-2 left-2 text-white/90 font-mono text-xs bg-black/70 backdrop-blur-sm px-2.5 py-1 rounded flex items-center gap-2 pointer-events-none">
-                <span className={`h-2 w-2 rounded-full ${streamStatus === 'connected' ? 'bg-emerald-400' : 'bg-sky-400'} animate-pulse`} />
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
                 <span>{camera.name}</span>
+                <span>•</span>
+                <span>LIVE</span>
                 <span>•</span>
                 <span>{currentTime}</span>
               </div>
 
-              {/* Live ANPR Detector Overlay on video */}
+              {/* Background ANPR frame capture (no overlay UI) */}
               {enableANPR && onPlateDetected && (
                 <LiveANPRDetector
                   cameraId={camera.id}
@@ -457,7 +441,7 @@ export function LiveFeedViewer({
                   ) : (
                     <>
                       <AlertCircle className="h-3 w-3 text-rose-400" />
-                      <span className="font-mono text-rose-400 uppercase">SIGNAL TIMED OUT</span>
+                      <span className="font-mono text-rose-400 uppercase">SIGNAL OFFLINE</span>
                     </>
                   )}
                 </div>
@@ -466,15 +450,19 @@ export function LiveFeedViewer({
               {/* Center Panel */}
               <div className="text-center space-y-3 my-auto max-w-md mx-auto">
                 <div className="p-3 rounded-full bg-neutral-800/80 border border-neutral-700 w-fit mx-auto">
-                  <Video className="h-7 w-7 text-primary animate-pulse" />
+                  {streamStatus === 'connecting' ? (
+                    <RefreshCw className="h-7 w-7 text-primary animate-spin" />
+                  ) : (
+                    <Video className="h-7 w-7 text-rose-400" />
+                  )}
                 </div>
 
                 <div>
                   <h4 className="text-sm font-semibold tracking-wide text-neutral-100">
-                    {streamStatus === 'connecting' ? 'Negotiating RTSP Connection...' : 'Physical Camera Signal Offline'}
+                    {streamStatus === 'connecting' ? 'Negotiating RTSP Live Stream...' : 'Camera Signal Offline'}
                   </h4>
-                  <p className="text-xs text-neutral-400 mt-1">
-                    Waiting for camera video stream signal...
+                  <p className="text-xs text-neutral-400 mt-1 font-mono">
+                    {cameraIp ? `IP: ${cameraIp}:554 • Auto-reconnecting live stream...` : 'Waiting for camera configuration...'}
                   </p>
                 </div>
 
@@ -498,23 +486,8 @@ export function LiveFeedViewer({
                         Port 8000: {diagResult.ports['8000'] ? 'OPEN' : 'CLOSED'}
                       </span>
                     </div>
-                    <p className="text-[10px] text-amber-400/90 pt-1">
-                      💡 Tip: Verify camera PoE power & plug the Ethernet cable into your network switch/PC.
-                    </p>
                   </div>
                 )}
-
-                {/* Primary Action Button: Start Simulation Preview */}
-                <div className="pt-1">
-                  <Button
-                    size="sm"
-                    className="w-full bg-gradient-to-r from-sky-600 to-primary hover:from-sky-500 hover:to-primary/90 text-white font-medium text-xs gap-2 py-2"
-                    onClick={handleStartSimulation}
-                  >
-                    <Tv className="h-4 w-4" />
-                    Preview Live Gate Camera (Demo Stream)
-                  </Button>
-                </div>
               </div>
 
               {/* Simplified Operator Quick Controls */}

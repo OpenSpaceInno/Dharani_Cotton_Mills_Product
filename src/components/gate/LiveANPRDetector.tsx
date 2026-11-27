@@ -192,40 +192,8 @@ export function LiveANPRDetector({
 
   return (
     <>
-      {/* Hidden canvas for frame capture */}
+      {/* Hidden canvas for background frame capture and automatic ANPR */}
       <canvas ref={canvasRef} style={{ display: 'none' }} />
-
-      {/* Detection status overlay */}
-      <Card className="absolute bottom-4 right-4 bg-black/80 border-primary/50">
-        <CardContent className="p-3">
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              {isProcessing ? (
-                <Zap className="h-5 w-5 text-primary animate-pulse" />
-              ) : (
-                <Camera className="h-5 w-5 text-primary" />
-              )}
-            </div>
-            <div className="text-left">
-              <div className="text-xs text-white/80 font-medium">
-                {isProcessing ? 'Scanning...' : 'ANPR Active'}
-              </div>
-              {lastDetection && (
-                <div className="text-xs text-primary font-mono font-semibold">
-                  {lastDetection.plate}
-                </div>
-              )}
-              <div className="text-xs text-white/60">
-                {detectionCount > 0 ? `${detectionCount} detected` : 'Waiting for vehicle'}
-              </div>
-            </div>
-            <Badge variant="outline" className="ml-2 bg-success/20 text-success border-success/50">
-              <span className="h-2 w-2 rounded-full bg-success animate-pulse mr-1" />
-              Live
-            </Badge>
-          </div>
-        </CardContent>
-      </Card>
     </>
   );
 }

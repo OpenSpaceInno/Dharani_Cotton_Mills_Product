@@ -279,6 +279,10 @@ export const DualCameraFeedPanel = forwardRef<DualCameraFeedPanelHandle, DualCam
     const video = videoRefs.current[index];
     if (!video) return;
 
+    if (video.srcObject) {
+      video.srcObject = null;
+    }
+
     if (reconnectTimers.current[index]) {
       clearTimeout(reconnectTimers.current[index]);
       reconnectTimers.current[index] = null;
@@ -307,7 +311,7 @@ export const DualCameraFeedPanel = forwardRef<DualCameraFeedPanelHandle, DualCam
     const streamUrl = urlOverride || camerasRef.current[index]?.hlsUrl || `/hls/${defaultSlug}/index.m3u8`;
     const targetUrl = normalizeHlsStreamUrl(streamUrl, defaultSlug);
 
-    const scheduleReconnect = (delayMs = 3000) => {
+    const scheduleReconnect = (delayMs = 5000) => {
       if (reconnectTimers.current[index]) clearTimeout(reconnectTimers.current[index]);
       reconnectTimers.current[index] = setTimeout(() => {
         console.log(`[Weighbridge Cam ${index + 1}] 🔄 Auto-reconnecting live stream...`);
@@ -363,9 +367,8 @@ export const DualCameraFeedPanel = forwardRef<DualCameraFeedPanelHandle, DualCam
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
-          // Keep simulated live video stream running smoothly
-          startFeed(index);
-          scheduleReconnect(6000);
+          setStreamStatuses(prev => ({ ...prev, [index]: 'standby' }));
+          scheduleReconnect(5000);
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -376,18 +379,14 @@ export const DualCameraFeedPanel = forwardRef<DualCameraFeedPanelHandle, DualCam
         setStreamStatuses(prev => ({ ...prev, [index]: 'connected' }));
       });
       video.addEventListener('error', () => {
-        scheduleReconnect(3000);
+        setStreamStatuses(prev => ({ ...prev, [index]: 'standby' }));
+        scheduleReconnect(5000);
       });
     }
-  }, []);
+  }, [stopFeed]);
 
   // Mount & initialize all camera streams when cameras change or DB loads
   useEffect(() => {
-    // Start live feeds immediately so viewports are active without waiting for RTSP negotiation
-    cameras.forEach((_, idx) => {
-      startFeed(idx);
-    });
-
     const timer = setTimeout(() => {
       cameras.forEach((cam, idx) => {
         initHls(idx, cam.hlsUrl);
@@ -660,10 +659,22 @@ export const DualCameraFeedPanel = forwardRef<DualCameraFeedPanelHandle, DualCam
                 )}
               </div>
               <div className="flex items-center gap-1.5 text-[11px] font-mono">
-                <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>Live 1080P</span>
-                </span>
+                {streamStatuses[idx] === 'connected' ? (
+                  <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>Live 1080P</span>
+                  </span>
+                ) : streamStatuses[idx] === 'connecting' ? (
+                  <span className="flex items-center gap-1.5 text-amber-500 font-medium">
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                    <span>Connecting...</span>
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-rose-500 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                    <span>Offline</span>
+                  </span>
+                )}
               </div>
             </div>
 
@@ -672,11 +683,29 @@ export const DualCameraFeedPanel = forwardRef<DualCameraFeedPanelHandle, DualCam
               {/* HTML5 Video element for physical HLS stream or live canvas stream */}
               <video
                 ref={el => { videoRefs.current[idx] = el; }}
-                className="absolute inset-0 w-full h-full object-cover z-0"
+                className={`absolute inset-0 w-full h-full object-cover z-0 ${streamStatuses[idx] === 'connected' ? 'block' : 'hidden'}`}
                 playsInline
                 muted
                 autoPlay
               />
+
+              {/* Connecting Overlay */}
+              {streamStatuses[idx] === 'connecting' && (
+                <div className="absolute inset-0 bg-neutral-950 flex flex-col items-center justify-center p-4 text-center z-5 text-white">
+                  <RefreshCw className="w-6 h-6 text-primary animate-spin mb-2" />
+                  <span className="text-xs text-white/80 font-mono">Connecting to {cam.name}...</span>
+                  <span className="text-[10px] text-neutral-400 font-mono mt-0.5">{cam.ip}:554</span>
+                </div>
+              )}
+
+              {/* Standby / Offline Overlay */}
+              {streamStatuses[idx] === 'standby' && (
+                <div className="absolute inset-0 bg-neutral-950 flex flex-col items-center justify-center p-4 text-center z-5 text-white">
+                  <Camera className="w-6 h-6 text-rose-400 mb-2" />
+                  <span className="text-xs text-white/90 font-mono font-medium">Camera Signal Offline</span>
+                  <span className="text-[10px] text-neutral-400 font-mono mt-0.5">{cam.ip}:554 • Auto-reconnecting...</span>
+                </div>
+              )}
 
               {/* Grid overlay for alignment */}
               <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff08_1px,transparent_1px),linear-gradient(to_bottom,#ffffff08_1px,transparent_1px)] bg-[size:2rem_2rem] pointer-events-none z-10" />
