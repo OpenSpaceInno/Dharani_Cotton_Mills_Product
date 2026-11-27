@@ -50,19 +50,24 @@ export const CameraManager: React.FC = () => {
 
   const buildRtspUrl = (user: string, pass: string, ip: string, port: number | string, path: string) => {
     if (!ip) return '';
+    const cleanIp = ip.includes('@') ? ip.split('@').pop()?.trim() || '' : ip.trim();
     const resolvedUser = user || 'admin';
     const resolvedPass = (pass && pass !== '••••••••') ? pass : 'Password@123';
     const creds = `${resolvedUser}:${resolvedPass}@`;
     const portStr = port && Number(port) !== 554 ? `:${port}` : ':554';
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
-    return `rtsp://${creds}${ip}${portStr}${cleanPath}`;
+    return `rtsp://${creds}${cleanIp}${portStr}${cleanPath}`;
   };
 
   const fetchCameras = async () => {
     try {
       setLoading(true);
       const data = await api.getCameras();
-      setCameras(Array.isArray(data) ? data : []);
+      const cleanList = (Array.isArray(data) ? data : []).map((cam: any) => ({
+        ...cam,
+        ip_address: (cam.ip_address || '').includes('@') ? cam.ip_address.split('@').pop() : cam.ip_address
+      }));
+      setCameras(cleanList);
     } catch (err: any) {
       toast.error('Failed to load camera devices: ' + err.message);
     } finally {
@@ -103,6 +108,8 @@ export const CameraManager: React.FC = () => {
     setEditingCamera(cam);
     setShowPassword(false);
     const targetDevId = cam.device_id || (cam as any).deviceId || (cam as any).id || '';
+    const rawIp = cam.ip_address || '';
+    const cleanIp = rawIp.includes('@') ? rawIp.split('@').pop()?.trim() || '' : rawIp.trim();
     let rtsp: any = null;
     try {
       rtsp = await api.getRTSPConfig(targetDevId);
@@ -119,8 +126,8 @@ export const CameraManager: React.FC = () => {
       name: cam.name || '',
       model: cam.model || 'Hikvision ANPR Bullet',
       location: cam.location || 'Main Gate',
-      ip_address: cam.ip_address || '',
-      rtsp_url: existingRtsp || buildRtspUrl(user, pass, cam.ip_address || '', port, stream),
+      ip_address: cleanIp,
+      rtsp_url: existingRtsp || buildRtspUrl(user, pass, cleanIp, port, stream),
       port: port,
       username: user,
       password: pass,
@@ -142,8 +149,10 @@ export const CameraManager: React.FC = () => {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetId = formData.device_id.trim();
-    if (!targetId || !formData.name || !formData.ip_address) {
-      toast.error('Please enter Camera ID, Name, and IP address.');
+    const rawIp = formData.ip_address.trim();
+    const cleanIp = rawIp.includes('@') ? rawIp.split('@').pop()?.trim() || '' : rawIp;
+    if (!targetId || !formData.name || !cleanIp) {
+      toast.error('Please enter Camera ID, Name, and valid IP address.');
       return;
     }
 
@@ -157,19 +166,19 @@ export const CameraManager: React.FC = () => {
         : 'cam1';
     const hlsProxyUrl = `http://localhost:8888/${slug}/index.m3u8`;
 
-    // Ensure RTSP URL reflects latest IP address
+    // Ensure RTSP URL reflects latest IP address and credentials
     let effectiveRtsp = formData.rtsp_url.trim();
-    if (!effectiveRtsp || (formData.ip_address && !effectiveRtsp.includes(formData.ip_address.trim()))) {
-      effectiveRtsp = buildRtspUrl(formData.username, formData.password, formData.ip_address.trim(), formData.port, formData.stream_path);
+    if (!effectiveRtsp || !effectiveRtsp.includes(cleanIp)) {
+      effectiveRtsp = buildRtspUrl(formData.username, formData.password, cleanIp, formData.port, formData.stream_path);
     }
 
     const cameraPayload = {
       device_id: targetId,
       deviceId: targetId,
-      name: formData.name,
-      model: formData.model,
-      location: formData.location,
-      ip_address: formData.ip_address.trim(),
+      name: formData.name.trim(),
+      model: formData.model.trim(),
+      location: formData.location.trim(),
+      ip_address: cleanIp,
       status: formData.status,
       rtsp_url: effectiveRtsp,
       direct_url: effectiveRtsp,
@@ -201,8 +210,8 @@ export const CameraManager: React.FC = () => {
     const networkPayload = {
       device_id: targetId,
       deviceId: targetId,
-      ip_address: formData.ip_address.trim(),
-      ipAddress: formData.ip_address.trim(),
+      ip_address: cleanIp,
+      ipAddress: cleanIp,
       subnet_mask: '255.255.255.0',
       gateway: '192.168.10.1',
       primary_dns: '8.8.8.8',
@@ -216,7 +225,7 @@ export const CameraManager: React.FC = () => {
         await api.updateCamera(originalId, cameraPayload);
         await api.saveRTSPConfig(rtspPayload).catch(() => {});
         await api.saveNetworkConfig(networkPayload).catch(() => {});
-        toast.success(`Camera "${formData.name}" updated with IP ${formData.ip_address} and persisted to database!`);
+        toast.success(`Camera "${formData.name}" updated with IP ${cleanIp} and persisted to database!`);
       } else {
         await api.createCamera(cameraPayload);
         await api.saveRTSPConfig(rtspPayload).catch(() => {});
@@ -228,6 +237,7 @@ export const CameraManager: React.FC = () => {
       notifyCameraSync();
     } catch (err: any) {
       toast.error(err.message || 'Failed to save camera.');
+    }
     }
   };
 

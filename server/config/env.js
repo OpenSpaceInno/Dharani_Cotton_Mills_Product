@@ -25,14 +25,16 @@ export function loadEnvironment() {
   loaded = true;
 
   const nodeEnv = process.env.NODE_ENV || 'development';
+  const dataDir = process.env.DHARANI_DATA_DIR || '';
   const candidates = [
+    dataDir ? path.join(dataDir, 'server.env') : null,
     path.join(serverRoot, `.env.${nodeEnv}.local`),
     path.join(projectRoot, `.env.${nodeEnv}.local`),
     path.join(serverRoot, `.env.${nodeEnv}`),
     path.join(projectRoot, `.env.${nodeEnv}`),
     path.join(serverRoot, '.env'),
     path.join(projectRoot, '.env'),
-  ];
+  ].filter(Boolean);
 
   for (const filePath of candidates) {
     if (fs.existsSync(filePath)) {

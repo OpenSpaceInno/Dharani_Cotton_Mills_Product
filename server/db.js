@@ -266,6 +266,20 @@ async function initializeDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
 
+    // Clean up any corrupted IP addresses with @ prefix
+    try {
+      await dbConnection.query(`
+        UPDATE camera_devices 
+        SET ip_address = SUBSTRING_INDEX(ip_address, '@', -1)
+        WHERE ip_address LIKE '%@%'
+      `);
+      await dbConnection.query(`
+        UPDATE device_network_config 
+        SET ip_address = SUBSTRING_INDEX(ip_address, '@', -1)
+        WHERE ip_address LIKE '%@%'
+      `);
+    } catch (_) {}
+
     // Ensure default camera devices exist
     await dbConnection.query(`
       INSERT INTO camera_devices (device_id, name, model, location, ip_address, status)

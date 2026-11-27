@@ -310,43 +310,54 @@ app.post('/api/cameras', async (req, res) => {
   }
 });
 
+// Helper: safely extract host/IP from RTSP URL even if password contains '@'
+function extractHostFromRtsp(url) {
+  if (!url || typeof url !== 'string') return '';
+  const afterAt = url.lastIndexOf('@') !== -1 ? url.slice(url.lastIndexOf('@') + 1) : url.replace(/^[a-z]+:\/\//i, '');
+  return afterAt.split(/[:/]/)[0].trim();
+}
+
 // Update camera device
 app.put('/api/cameras/:deviceId', async (req, res) => {
   try {
     const targetDevId = req.params.deviceId;
     const b = req.body;
-    const newDeviceId = b.device_id || b.deviceId || targetDevId;
-    const name = b.name || 'Camera';
-    const model = b.model || 'IP Camera';
-    const location = b.location || 'Gate';
-    const ip_address = b.ip_address || b.ipAddress || '';
+    const newDeviceId = (b.device_id || b.deviceId || targetDevId).trim();
+    const name = (b.name || 'Camera').trim();
+    const model = (b.model || 'IP Camera').trim();
+    const location = (b.location || 'Gate').trim();
+    let rawIp = b.ip_address || b.ipAddress || '';
+    const cleanIp = rawIp.includes('@') ? rawIp.split('@').pop().trim() : rawIp.trim();
     const mac_address = b.mac_address || b.macAddress || null;
     const status = b.status || 'online';
     const firmware = b.firmware || null;
 
+    // 1. Atomic upsert into camera_devices (updates if present, inserts if missing)
     await pool.query(
-      `UPDATE camera_devices 
-       SET device_id = ?, name = ?, model = ?, location = ?, ip_address = ?, mac_address = ?, status = ?, firmware = ?, last_seen = NOW()
-       WHERE device_id = ? OR id = ?`,
-      [newDeviceId, name, model, location, ip_address, mac_address, status, firmware, targetDevId, targetDevId]
+      `INSERT INTO camera_devices (device_id, name, model, location, ip_address, mac_address, status, firmware, last_seen, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+       ON DUPLICATE KEY UPDATE 
+         name=VALUES(name), model=VALUES(model), location=VALUES(location), ip_address=VALUES(ip_address), 
+         mac_address=VALUES(mac_address), status=VALUES(status), firmware=VALUES(firmware), last_seen=NOW(), updated_at=NOW()`,
+      [newDeviceId, name, model, location, cleanIp, mac_address, status, firmware]
     );
 
-    // Sync RTSP configuration
+    // 2. Sync RTSP configuration
     const slug = getCameraSlug(newDeviceId, name);
-    const [existingRtsp] = await pool.query('SELECT * FROM device_rtsp_config WHERE device_id = ?', [newDeviceId]);
+    const [existingRtsp] = await pool.query('SELECT * FROM device_rtsp_config WHERE device_id = ? OR device_id = ?', [newDeviceId, targetDevId]);
     const existingObj = existingRtsp[0] || {};
 
     const rtspUser = b.username || existingObj.username || 'admin';
     const rtspPass = b.password || existingObj.password || 'Password@123';
     const rtspPort = Number(b.port) || existingObj.port || 554;
     const streamPath = b.stream_path || existingObj.stream_path || '/ch1/main/av_stream';
-    
+    const cleanStream = streamPath.startsWith('/') ? streamPath : `/${streamPath}`;
+
     let directUrl = (b.direct_url || b.directUrl || b.rtsp_url || b.url || '').trim();
-    if (ip_address) {
-      const hostMatch = directUrl.match(/@([^:/]+):/);
-      const host = hostMatch ? hostMatch[1] : '';
-      if (!directUrl || (host && host !== ip_address)) {
-        directUrl = `rtsp://${rtspUser}:${rtspPass}@${ip_address}:${rtspPort}${streamPath.startsWith('/') ? '' : '/'}${streamPath}`;
+    if (cleanIp) {
+      const extractedHost = extractHostFromRtsp(directUrl);
+      if (!directUrl || extractedHost !== cleanIp) {
+        directUrl = `rtsp://${rtspUser}:${rtspPass}@${cleanIp}:${rtspPort}${cleanStream}`;
       }
     } else if (!directUrl && existingObj.direct_url) {
       directUrl = existingObj.direct_url;
@@ -360,34 +371,30 @@ app.put('/api/cameras/:deviceId', async (req, res) => {
       hlsProxyUrl = `${hlsProxyUrl}/index.m3u8`;
     }
 
-    if (existingRtsp.length > 0) {
-      await pool.query(`
-        UPDATE device_rtsp_config 
-        SET url = ?, direct_url = ?, hls_proxy_url = ?, port = COALESCE(?, port), username = ?, password = ?, stream_path = ?, updated_at = NOW()
-        WHERE device_id = ?
-      `, [directUrl, directUrl, hlsProxyUrl, rtspPort, rtspUser, rtspPass, streamPath, newDeviceId]);
-    } else if (directUrl) {
-      await pool.query(`
-        INSERT INTO device_rtsp_config 
-          (device_id, enabled, url, direct_url, use_direct_url, port, username, password, stream_path, transport, reconnect_interval, buffer_size, low_latency_mode, hls_proxy_url)
-        VALUES (?, 1, ?, ?, 1, ?, ?, ?, ?, 'tcp', 5, 1024, 1, ?)
-      `, [newDeviceId, directUrl, directUrl, rtspPort, rtspUser, rtspPass, streamPath, hlsProxyUrl]);
-    }
+    await pool.query(`
+      INSERT INTO device_rtsp_config 
+        (device_id, enabled, url, direct_url, use_direct_url, port, username, password, stream_path, transport, reconnect_interval, buffer_size, low_latency_mode, hls_proxy_url, updated_at)
+      VALUES (?, 1, ?, ?, 1, ?, ?, ?, ?, 'tcp', 5, 1024, 1, ?, NOW())
+      ON DUPLICATE KEY UPDATE 
+        url=VALUES(url), direct_url=VALUES(direct_url), hls_proxy_url=VALUES(hls_proxy_url), port=VALUES(port), 
+        username=VALUES(username), password=VALUES(password), stream_path=VALUES(stream_path), updated_at=NOW()
+    `, [newDeviceId, directUrl, directUrl, rtspPort, rtspUser, rtspPass, cleanStream, hlsProxyUrl]);
 
-    // Sync network config
-    if (ip_address) {
+    // 3. Sync network config
+    if (cleanIp) {
       await pool.query(`
-        INSERT INTO device_network_config (device_id, ip_address, subnet_mask, gateway, primary_dns, secondary_dns, dhcp_enabled)
-        VALUES (?, ?, '255.255.255.0', '192.168.10.1', '8.8.8.8', '8.8.4.4', 0)
-        ON DUPLICATE KEY UPDATE ip_address = VALUES(ip_address)
-      `, [newDeviceId, ip_address]);
+        INSERT INTO device_network_config (device_id, ip_address, subnet_mask, gateway, primary_dns, secondary_dns, dhcp_enabled, updated_at)
+        VALUES (?, ?, '255.255.255.0', '192.168.10.1', '8.8.8.8', '8.8.4.4', 0, NOW())
+        ON DUPLICATE KEY UPDATE ip_address=VALUES(ip_address), updated_at=NOW()
+      `, [newDeviceId, cleanIp]);
     }
 
     await syncMediaMtxConfig().catch(() => {});
     restartMediaMtx();
 
-    res.json({ success: true, device_id: newDeviceId, hls_proxy_url: hlsProxyUrl });
+    res.json({ success: true, device_id: newDeviceId, ip_address: cleanIp, hls_proxy_url: hlsProxyUrl });
   } catch (error) {
+    console.error('Error updating camera device:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -468,41 +475,29 @@ app.post('/api/rtsp-config', async (req, res) => {
       hls_proxy_url = `${hls_proxy_url}/index.m3u8`;
     }
 
-    // Check if config exists
-    const [existing] = await pool.query('SELECT device_id FROM device_rtsp_config WHERE device_id = ?', [device_id]);
-    
-    if (existing.length > 0) {
-      // Update existing
-      await pool.query(
-        `UPDATE device_rtsp_config 
-         SET enabled = ?, url = ?, direct_url = ?, use_direct_url = ?, port = ?, username = ?, password = ?,
-             stream_path = ?, transport = ?, reconnect_interval = ?, buffer_size = ?, low_latency_mode = ?, hls_proxy_url = ?,
-             updated_at = NOW()
-         WHERE device_id = ?`,
-        [enabled, url, direct_url, use_direct_url, port, username, password, stream_path, transport, 
-         reconnect_interval, buffer_size, low_latency_mode, hls_proxy_url, device_id]
-      );
-    } else {
-      // Insert new
-      await pool.query(
-        `INSERT INTO device_rtsp_config 
-         (device_id, enabled, url, direct_url, use_direct_url, port, username, password, stream_path, 
-          transport, reconnect_interval, buffer_size, low_latency_mode, hls_proxy_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [device_id, enabled, url, direct_url, use_direct_url, port, username, password, stream_path, 
-         transport, reconnect_interval, buffer_size, low_latency_mode, hls_proxy_url]
-      );
-    }
+    // Atomic upsert for device_rtsp_config
+    await pool.query(
+      `INSERT INTO device_rtsp_config 
+        (device_id, enabled, url, direct_url, use_direct_url, port, username, password, stream_path, 
+         transport, reconnect_interval, buffer_size, low_latency_mode, hls_proxy_url, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE 
+         enabled=VALUES(enabled), url=VALUES(url), direct_url=VALUES(direct_url), use_direct_url=VALUES(use_direct_url),
+         port=VALUES(port), username=VALUES(username), password=VALUES(password), stream_path=VALUES(stream_path),
+         transport=VALUES(transport), reconnect_interval=VALUES(reconnect_interval), buffer_size=VALUES(buffer_size),
+         low_latency_mode=VALUES(low_latency_mode), hls_proxy_url=VALUES(hls_proxy_url), updated_at=NOW()`,
+      [device_id, enabled, url, direct_url, use_direct_url, port, username, password, stream_path, 
+       transport, reconnect_interval, buffer_size, low_latency_mode, hls_proxy_url]
+    );
 
-    // If an IP is detected in the RTSP URL, keep camera_devices and device_network_config synced
-    const ipMatch = direct_url.match(/@([^:/]+):/);
-    if (ipMatch && ipMatch[1]) {
-      const detectedIp = ipMatch[1];
-      await pool.query('UPDATE camera_devices SET ip_address = ? WHERE device_id = ?', [detectedIp, device_id]);
+    // If an IP is detected in the RTSP URL, keep camera_devices and device_network_config synced safely
+    const detectedIp = extractHostFromRtsp(direct_url);
+    if (detectedIp && !detectedIp.includes('@') && /^[0-9a-zA-Z.-]+$/.test(detectedIp)) {
+      await pool.query('UPDATE camera_devices SET ip_address = ?, updated_at = NOW() WHERE device_id = ?', [detectedIp, device_id]);
       await pool.query(`
-        INSERT INTO device_network_config (device_id, ip_address, subnet_mask, gateway, primary_dns, secondary_dns, dhcp_enabled)
-        VALUES (?, ?, '255.255.255.0', '192.168.10.1', '8.8.8.8', '8.8.4.4', 0)
-        ON DUPLICATE KEY UPDATE ip_address = VALUES(ip_address)
+        INSERT INTO device_network_config (device_id, ip_address, subnet_mask, gateway, primary_dns, secondary_dns, dhcp_enabled, updated_at)
+        VALUES (?, ?, '255.255.255.0', '192.168.10.1', '8.8.8.8', '8.8.4.4', 0, NOW())
+        ON DUPLICATE KEY UPDATE ip_address = VALUES(ip_address), updated_at = NOW()
       `, [device_id, detectedIp]);
     }
     
@@ -5150,16 +5145,16 @@ async function syncMediaMtxConfig() {
     let pathsYaml = '\n';
     cameras.forEach((cam, idx) => {
       let rtsp = cam.direct_url || cam.rtsp_url || '';
-      if (cam.ip_address) {
-        const hostMatch = rtsp.match(/@([^:/]+):/);
-        const host = hostMatch ? hostMatch[1] : '';
-        if (!rtsp || (host && host !== cam.ip_address)) {
+      const cleanCamIp = (cam.ip_address || '').includes('@') ? cam.ip_address.split('@').pop().trim() : (cam.ip_address || '').trim();
+      if (cleanCamIp) {
+        const host = extractHostFromRtsp(rtsp);
+        if (!rtsp || (host && host !== cleanCamIp)) {
           const u = cam.rtsp_username || 'admin';
           const p = cam.rtsp_password || 'Password@123';
           const port = cam.rtsp_port || 554;
           const stream = cam.stream_path || '/ch1/main/av_stream';
           const cleanStream = stream.startsWith('/') ? stream : `/${stream}`;
-          rtsp = `rtsp://${u}:${p}@${cam.ip_address}:${port}${cleanStream}`;
+          rtsp = `rtsp://${u}:${p}@${cleanCamIp}:${port}${cleanStream}`;
         }
       }
       if (!rtsp) return;
